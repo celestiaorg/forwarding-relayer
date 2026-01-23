@@ -1,1 +1,9 @@
 /target
+
+# Storage directory for database files
+/storage/
+
+# Legacy database files (if any still exist in root)
+*.db
+*.db-shm
+*.db-wal

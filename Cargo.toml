@@ -23,3 +23,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 tendermint-rpc = { version = "0.39", features = ["http-client"] }
 bip32 = "0.5"
 bip39 = { version = "2.1", features = ["std"] }
+axum = "0.7"
+tower = "0.5"
+chrono = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }

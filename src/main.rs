@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use forwarding_relayer::{Config, Relayer};
+use forwarding_relayer::{Backend, Cli, Command, Relayer};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -12,10 +12,19 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    // Parse configuration
-    let config = Config::parse();
+    // Parse CLI
+    let cli = Cli::parse();
 
-    // Create and run relayer
-    let mut relayer = Relayer::new(config).await?;
-    relayer.run().await
+    match cli.command {
+        Command::Relayer(config) => {
+            // Create and run relayer
+            let mut relayer = Relayer::new(config).await?;
+            relayer.run().await
+        }
+        Command::Backend(config) => {
+            // Create and run backend
+            let backend = Backend::new(config.port, config.db_path)?;
+            backend.serve().await
+        }
+    }
 }

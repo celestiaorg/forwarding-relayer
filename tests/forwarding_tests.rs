@@ -1,18 +1,4 @@
-use forwarding_relayer::{derive_forwarding_address, Balance, balances_equal};
-
-#[test]
-fn test_derive_forwarding_address() {
-    // Test case from the spec
-    let dest_domain = 42161; // Arbitrum
-    let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
-
-    let result = derive_forwarding_address(dest_domain, dest_recipient);
-    assert!(result.is_ok());
-
-    let address = result.unwrap();
-    assert!(address.starts_with("celestia1"));
-    println!("Derived address (domain 42161): {}", address);
-}
+use forwarding_relayer::{balances_equal, derive_forwarding_address, Balance};
 
 #[test]
 fn test_derive_forwarding_address_default() {

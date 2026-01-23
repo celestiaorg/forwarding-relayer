@@ -96,16 +96,21 @@ derive-address:
 	@echo "Recipient: 0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d"
 	@echo ""
 	@cargo test test_derive_forwarding_address_default -- --nocapture 2>&1 | grep "Derived address" || \
-		echo "Forwarding Address: celestia1rvzd5yzt8t3zv6q47rp59f2sxq0vjy4zxjxka7"
+		echo "Forwarding Address: celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e"
 .PHONY: derive-address
 
 ## send-to-forward-addr: Send tokens to the default forwarding address for E2E testing.
 send-to-forward-addr:
 	@echo "--> Sending tokens to default forwarding address"
-	@echo "Make sure the relayer is running with:"
-	@echo "  cargo run --release -- --dest-domain 1234 --dest-recipient 0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d"
+	@echo "Make sure the backend server is running with:"
+	@echo "  cargo run --example backend_demo  (for E2E testing with pre-populated data)"
+	@echo "  OR: cargo run --release -- backend --port 8080"
+	@echo "And the relayer is running with:"
+	@echo "  cargo run --release -- relayer --backend-url http://localhost:8080"
 	@echo ""
-	@$(MAKE) send-to-address ADDR=celestia1rvzd5yzt8t3zv6q47rp59f2sxq0vjy4zxjxka7 AMOUNT=1000000
+	@echo "Database files will be stored in storage/ directory"
+	@echo ""
+	@$(MAKE) send-to-address ADDR=celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e AMOUNT=1000000
 .PHONY: send-to-forward-addr
 
 e2e:
