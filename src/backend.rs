@@ -73,21 +73,6 @@ impl BackendStorage {
         })
     }
 
-    /// Get the next ID counter
-    pub fn get_next_id(&self) -> Result<u64> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT value FROM backend_metadata WHERE key = 'next_id'")
-            .context("Failed to prepare SELECT statement")?;
-
-        let result: Option<u64> = stmt
-            .query_row([], |row| row.get(0))
-            .optional()
-            .context("Failed to query next_id")?;
-
-        Ok(result.unwrap_or(1))
-    }
-
     /// Increment and return the next ID
     pub fn increment_next_id(&self) -> Result<u64> {
         let conn = self.conn.lock().unwrap();

@@ -1,40 +1,3 @@
-# Celestia Forwarding Relayer
-
-An off-chain relayer service that monitors forwarding addresses on Celestia and automatically triggers cross-chain token transfers.
-
-## Features
-
-- **Backend Server** - REST API for managing forwarding requests with SQLite storage
-- **Persistent Storage** - SQLite-based storage for both balance cache and backend requests
-- **Multi-Address Support** - Monitor multiple forwarding addresses simultaneously
-- **Robust Status Updates** - Automatically updates backend after successful forwarding
-
-## Quick Start
-
-See [USAGE.md](USAGE.md) for detailed usage instructions.
-
-### Run Backend Server
-
-```bash
-cargo run --release -- backend --port 8080
-```
-
-The backend server provides a REST API for managing forwarding requests with SQLite persistence. Database files are stored in `storage/` by default.
-
-### Run Relayer
-
-```bash
-cargo run --release -- relayer \
-  --backend-url http://localhost:8080 \
-  --relayer-mnemonic "your mnemonic here"
-```
-
-## Documentation
-
-- [USAGE.md](USAGE.md) - Detailed usage guide for new features
-- [RELAYER.md](RELAYER.md) - Complete relayer specification
-- [CHANGELOG.md](CHANGELOG.md) - Recent changes and migration guide
-
 # E2E Test Guide
 
 Complete end-to-end test guide for the forwarding relayer with backend server.
@@ -94,36 +57,39 @@ docker exec celestia-validator celestia-appd query bank balances \
 In a **new terminal (Terminal 1)**:
 
 ```bash
-# For E2E testing, use the demo example which pre-populates test data
-cargo run --example backend_demo
-```
-
-You should see output like:
-
-```
-Added E2E test forwarding request:
-  Forward address: celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e
-  Destination domain: 1234
-  Destination recipient: 0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d
-
-Backend running on http://localhost:8080
-Available endpoints:
-  GET  http://localhost:8080/forwarding-requests
-  POST http://localhost:8080/forwarding-requests
-  PATCH http://localhost:8080/forwarding-requests/{id}/status
-```
-
-The backend server is now serving one forwarding request for the test address, stored in SQLite.
-
-**Note:** For production use, run the backend without test data:
-```bash
 cargo run --release -- backend --port 8080
 ```
-Then create forwarding requests via the REST API. Database files are stored in `storage/` by default.
 
-### 5. Start the relayer
+The backend server starts with an empty database in `storage/backend.db`.
 
-In a **new terminal (Terminal 2)**:
+### 5. Create a forwarding request
+
+In a **new terminal (Terminal 2)**, create a forwarding request via the REST API:
+
+```bash
+curl -X POST http://localhost:8080/forwarding-requests \
+  -H "Content-Type: application/json" \
+  -d '{
+    "forward_addr": "celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e",
+    "dest_domain": 1234,
+    "dest_recipient": "0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d"
+  }'
+```
+
+This creates a forwarding request with:
+- **Forward address**: `celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e`
+- **Destination domain**: 1234
+- **Destination recipient**: `0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d`
+
+Verify the request was created:
+
+```bash
+curl http://localhost:8080/forwarding-requests | jq
+```
+
+### 6. Start the relayer
+
+In a **new terminal (Terminal 3)**:
 
 ```bash
 RUST_LOG=info ./target/release/forwarding-relayer relayer \
@@ -131,6 +97,8 @@ RUST_LOG=info ./target/release/forwarding-relayer relayer \
   --backend-url http://localhost:8080 \
   --relayer-mnemonic "veteran capital explain keep focus nuclear police casino exercise pitch hover job sleep slam wasp honey tenant breeze hold hat quality upper multiply gossip"
 ```
+
+**Note**: This uses the default test mnemonic which derives to `celestia1ehy4f4a0y6zue7xvdr0zuvsawplh7tkh0xlws3` (the address you funded in step 3).
 
 You should see logs like:
 
@@ -146,9 +114,9 @@ No new deposits detected at celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e
 
 The relayer is now polling the backend and monitoring the forwarding address every 6 seconds.
 
-### 6. Send tokens to the forwarding address
+### 7. Send tokens to the forwarding address
 
-In a **new terminal (Terminal 3)**:
+In a **new terminal (Terminal 4)**:
 
 ```bash
 # Using the Makefile helper
@@ -160,9 +128,9 @@ make send-to-address ADDR=celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e AMOUNT
 
 This sends 1 TIA (1,000,000 utia) to the forwarding address.
 
-### 7. Watch the relayer automatically forward
+### 8. Watch the relayer automatically forward
 
-Switch back to **Terminal 2** (relayer logs). Within ~6 seconds, you should see:
+Switch back to **Terminal 3** (relayer logs). Within ~6 seconds, you should see:
 
 ```
 New deposit detected at celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e! Balance changed:
@@ -181,7 +149,7 @@ The relayer:
 4. Verified all tokens were forwarded
 5. Updated the backend status to "completed"
 
-### 8. Verify the transaction
+### 9. Verify the transaction
 
 Query the transaction to confirm success:
 
@@ -193,7 +161,7 @@ Look for:
 - `code: 0` - Transaction succeeded
 - `EventTokenForwarded` events with `success: true`
 
-### 9. Check the backend status
+### 10. Check the backend status
 
 Verify the backend was updated:
 
@@ -203,7 +171,7 @@ curl http://localhost:8080/forwarding-requests | jq
 
 You should see the request with `"status": "completed"`.
 
-### 10. Verify balance cache
+### 11. Verify balance cache
 
 Check that the balance cache was saved to disk:
 
@@ -222,7 +190,7 @@ Stop the Docker environment:
 make stop
 ```
 
-Stop the backend server (Ctrl+C in Terminal 1) and relayer (Ctrl+C in Terminal 2).
+Stop the backend server (Ctrl+C in Terminal 1) and relayer (Ctrl+C in Terminal 3).
 
 ## Test Parameters
 
@@ -235,9 +203,9 @@ Stop the backend server (Ctrl+C in Terminal 1) and relayer (Ctrl+C in Terminal 2
 
 To test that the relayer survives restarts:
 
-1. Complete steps 1-6 above (send tokens but don't wait for forwarding)
-2. Stop the relayer (Ctrl+C in Terminal 2)
-3. Restart the relayer (run step 5 again)
+1. Complete steps 1-7 above (send tokens but don't wait for forwarding)
+2. Stop the relayer (Ctrl+C in Terminal 3)
+3. Restart the relayer (run step 6 again)
 4. The relayer should:
    - Load the balance cache from disk
    - Detect that tokens are still present (different from cached balance)

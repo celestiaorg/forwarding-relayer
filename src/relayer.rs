@@ -43,7 +43,11 @@ pub struct RelayerConfig {
     pub igp_fee_buffer: f64,
 
     /// Path to balance cache database file
-    #[arg(long, env = "BALANCE_CACHE_PATH", default_value = "storage/balance_cache.db")]
+    #[arg(
+        long,
+        env = "BALANCE_CACHE_PATH",
+        default_value = "storage/balance_cache.db"
+    )]
     pub balance_cache_path: PathBuf,
 }
 
@@ -119,17 +123,6 @@ impl BalanceCacheStorage {
         )
         .context("Failed to save balance to cache")?;
 
-        Ok(())
-    }
-
-    /// Remove an address from cache
-    pub fn remove(&self, address: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "DELETE FROM balance_cache WHERE address = ?1",
-            params![address],
-        )
-        .context("Failed to remove balance from cache")?;
         Ok(())
     }
 }
