@@ -288,18 +288,29 @@ impl CelestiaClient {
     async fn broadcast_tx(&self, tx_bytes: Vec<u8>) -> Result<String> {
         let response = self
             .tendermint_client
-            .broadcast_tx_sync(tx_bytes)
+            .broadcast_tx_commit(tx_bytes)
             .await
             .context("Failed to broadcast transaction")?;
 
-        if response.code.is_err() {
+        // Check if transaction was included in a block (check_tx)
+        if response.check_tx.code.is_err() {
             anyhow::bail!(
-                "Transaction failed: code={:?}, log={}",
-                response.code,
-                response.log
+                "Transaction rejected by mempool: code={:?}, log={}",
+                response.check_tx.code,
+                response.check_tx.log
             );
         }
 
+        // Check if transaction executed successfully (deliver_tx)
+        if response.tx_result.code.is_err() {
+            anyhow::bail!(
+                "Transaction execution failed: code={:?}, log={}",
+                response.tx_result.code,
+                response.tx_result.log
+            );
+        }
+
+        info!("Transaction executed successfully in block {}", response.height);
         Ok(response.hash.to_string())
     }
 }

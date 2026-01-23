@@ -125,6 +125,14 @@ impl BalanceCacheStorage {
 
         Ok(())
     }
+
+    /// Remove balance cache for a specific address
+    pub fn remove(&self, address: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM balance_cache WHERE address = ?1", params![address])
+            .context("Failed to remove balance from cache")?;
+        Ok(())
+    }
 }
 
 /// Relayer state
@@ -337,41 +345,19 @@ impl Relayer {
             .await
         {
             Ok(tx_hash) => {
-                info!("Forwarding submitted: tx_hash={}", tx_hash);
+                info!("Forwarding successful: tx_hash={}", tx_hash);
 
-                // Wait a bit for the transaction to be included
-                tokio::time::sleep(Duration::from_secs(2)).await;
-
-                // Query new balance after forwarding
-                let new_balance = self.celestia.query_balance(forward_addr).await?;
-
-                // Check if all tokens were forwarded (balance is now zero or significantly reduced)
-                let all_forwarded = new_balance.is_empty()
-                    || new_balance
-                        .iter()
-                        .all(|b| b.amount == "0" || b.amount.is_empty());
-
-                if all_forwarded {
-                    info!("All tokens forwarded successfully from {}", forward_addr);
-
-                    // Update backend status to completed
-                    if let Err(e) = self.update_request_status(&request.id, "completed").await {
-                        warn!(
-                            "Failed to update backend status for request {}: {:#}",
-                            request.id, e
-                        );
-                    }
-                } else {
-                    info!(
-                        "Partial forwarding from {}, will retry on next cycle",
-                        forward_addr
+                // Transaction succeeded, update backend status to completed
+                if let Err(e) = self.update_request_status(&request.id, "completed").await {
+                    warn!(
+                        "Failed to update backend status for request {}: {:#}",
+                        request.id, e
                     );
                 }
 
-                // Update balance cache
-                self.cached_balances
-                    .insert(forward_addr.clone(), new_balance.clone());
-                self.balance_cache.save(forward_addr, &new_balance)?;
+                // Clear balance cache for this address
+                self.cached_balances.remove(forward_addr);
+                self.balance_cache.remove(forward_addr)?;
             }
             Err(e) => {
                 error!("Failed to submit forwarding for {}: {:#}", forward_addr, e);
