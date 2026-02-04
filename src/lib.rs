@@ -10,7 +10,6 @@ mod relayer;
 
 // Re-export public types from modules
 pub use backend::{Backend, BackendConfig, BackendState};
-pub use backend::{MockBackend, MockBackendConfig, MockBackendState}; // Legacy aliases
 pub use relayer::{balances_equal, Relayer, RelayerConfig};
 
 /// Forwarding relayer CLI
@@ -29,7 +28,6 @@ pub enum Command {
     /// Run the backend server
     Backend(BackendConfig),
 }
-
 
 /// Forwarding request from backend API
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,8 +61,6 @@ pub struct Balance {
     pub denom: String,
     pub amount: String,
 }
-
-
 
 /// Derive a forwarding address from dest_domain and dest_recipient
 ///
@@ -133,4 +129,3 @@ pub fn derive_forwarding_address(dest_domain: u32, dest_recipient: &str) -> Resu
 
     Ok(address)
 }
-

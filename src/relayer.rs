@@ -129,8 +129,11 @@ impl BalanceCacheStorage {
     /// Remove balance cache for a specific address
     pub fn remove(&self, address: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM balance_cache WHERE address = ?1", params![address])
-            .context("Failed to remove balance from cache")?;
+        conn.execute(
+            "DELETE FROM balance_cache WHERE address = ?1",
+            params![address],
+        )
+        .context("Failed to remove balance from cache")?;
         Ok(())
     }
 }
@@ -295,7 +298,7 @@ impl Relayer {
         debug!("Checking balance at {}", forward_addr);
 
         // Query current balance
-        let balances = self.celestia.query_balance(forward_addr).await?;
+        let balances = self.celestia.query_balances(forward_addr).await?;
 
         // Get cached balance for this address
         let cached_balance = self.cached_balances.get(forward_addr);

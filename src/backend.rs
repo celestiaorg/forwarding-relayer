@@ -353,11 +353,6 @@ impl Backend {
     }
 }
 
-// Legacy type aliases for backward compatibility
-pub type MockBackend = Backend;
-pub type MockBackendState = BackendState;
-pub type MockBackendConfig = BackendConfig;
-
 /// GET /forwarding-requests - List all forwarding requests
 async fn list_requests(
     State(state): State<BackendState>,

@@ -83,7 +83,7 @@ impl CelestiaClient {
     }
 
     /// Query balance at an address using RPC
-    pub(crate) async fn query_balance(&self, address: &str) -> Result<Vec<Balance>> {
+    pub(crate) async fn query_balances(&self, address: &str) -> Result<Vec<Balance>> {
         let url = format!("{}/cosmos/bank/v1beta1/balances/{}", self.rpc_url, address);
 
         let response = self
@@ -143,7 +143,7 @@ impl CelestiaClient {
                 dest_domain,
                 response.status()
             );
-            // Return a default fee if query fails
+            // Return a default fee of 0 if query fails
             return Ok("0".to_string());
         }
 
@@ -310,7 +310,10 @@ impl CelestiaClient {
             );
         }
 
-        info!("Transaction executed successfully in block {}", response.height);
+        info!(
+            "Transaction executed successfully in block {}",
+            response.height
+        );
         Ok(response.hash.to_string())
     }
 }
