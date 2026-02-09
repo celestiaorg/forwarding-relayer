@@ -1,21 +1,14 @@
 package cmd
 
 import (
-	"fmt"
 	"log"
 	"strconv"
 
 	"github.com/bcp-innovations/hyperlane-cosmos/util"
 	ismtypes "github.com/bcp-innovations/hyperlane-cosmos/x/core/01_interchain_security/types"
-	coretypes "github.com/bcp-innovations/hyperlane-cosmos/x/core/types"
-	warptypes "github.com/bcp-innovations/hyperlane-cosmos/x/warp/types"
-	"github.com/celestiaorg/celestia-app/v6/app"
-	"github.com/celestiaorg/celestia-app/v6/app/encoding"
-	"github.com/ethereum/go-ethereum/ethclient"
-	evclient "github.com/evstack/ev-node/pkg/rpc/client"
+	"github.com/celestiaorg/celestia-app/v7/app"
+	"github.com/celestiaorg/celestia-app/v7/app/encoding"
 	"github.com/spf13/cobra"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type HyperlaneConfig struct {
@@ -38,63 +31,21 @@ func NewRootCmd() *cobra.Command {
 	}
 
 	rootCmd.AddCommand(getDeployNoopIsmStackCmd())
-	rootCmd.AddCommand(getDeployZKIsmStackCmd())
 	rootCmd.AddCommand(getEnrollRouterCmd())
-	rootCmd.AddCommand(getSetupZkIsmCmd())
 	return rootCmd
-}
-
-func getDeployZKIsmStackCmd() *cobra.Command {
-	deployCmd := &cobra.Command{
-		Use:   "deploy-zkism [celestia-grpc] [evm-rpc] [ev-node-rpc]",
-		Short: "Deploy cosmosnative hyperlane components using a ZKExecutionIsm to a remote service via gRPC",
-		Args:  cobra.ExactArgs(3),
-		Run: func(cmd *cobra.Command, args []string) {
-			ctx := cmd.Context()
-			enc := encoding.MakeConfig(app.ModuleEncodingRegisters...)
-
-			grpcAddr := args[0]
-			grpcConn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-			if err != nil {
-				log.Fatalf("failed to connect to gRPC: %v", err)
-			}
-			defer grpcConn.Close()
-
-			broadcaster := NewBroadcaster(enc, grpcConn)
-
-			evmRpcAddr := args[1]
-			client, err := ethclient.Dial(fmt.Sprintf("http://%s", evmRpcAddr))
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			evnodeRpcAddr := args[2]
-			evnode := evclient.NewClient(fmt.Sprintf("http://%s", evnodeRpcAddr))
-
-			ismID := SetupZKIsm(ctx, broadcaster, client, evnode)
-			SetupWithIsm(ctx, broadcaster, ismID)
-		},
-	}
-	return deployCmd
 }
 
 func getDeployNoopIsmStackCmd() *cobra.Command {
 	deployCmd := &cobra.Command{
-		Use:   "deploy-noopism [celestia-grpc]",
-		Short: "Deploy cosmosnative hyperlane components using a NoopIsm to a remote service via gRPC",
+		Use:   "deploy-noopism [celestia-rpc]",
+		Short: "Deploy cosmosnative hyperlane components using a NoopIsm to a remote service via RPC",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx := cmd.Context()
 			enc := encoding.MakeConfig(app.ModuleEncodingRegisters...)
 
-			grpcAddr := args[0]
-			grpcConn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-			if err != nil {
-				log.Fatalf("failed to connect to gRPC: %v", err)
-			}
-			defer grpcConn.Close()
-
-			broadcaster := NewBroadcaster(enc, grpcConn)
+			rpcAddr := args[0]
+			broadcaster := NewBroadcaster(enc, rpcAddr)
 			msgCreateNoopISM := ismtypes.MsgCreateNoopIsm{
 				Creator: broadcaster.address.String(),
 			}
@@ -110,21 +61,15 @@ func getDeployNoopIsmStackCmd() *cobra.Command {
 
 func getEnrollRouterCmd() *cobra.Command {
 	enrollRouterCmd := &cobra.Command{
-		Use:   "enroll-remote-router [grpc-addr] [token-id] [remote-domain] [remote-contract]",
+		Use:   "enroll-remote-router [rpc-addr] [token-id] [remote-domain] [remote-contract]",
 		Short: "Enroll the remote router contract address for a cosmosnative hyperlane warp route",
 		Args:  cobra.ExactArgs(4),
 		Run: func(cmd *cobra.Command, args []string) {
 			ctx := cmd.Context()
 			enc := encoding.MakeConfig(app.ModuleEncodingRegisters...)
 
-			grpcAddr := args[0]
-			grpcConn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-			if err != nil {
-				log.Fatalf("failed to connect to gRPC: %v", err)
-			}
-			defer grpcConn.Close()
-
-			broadcaster := NewBroadcaster(enc, grpcConn)
+			rpcAddr := args[0]
+			broadcaster := NewBroadcaster(enc, rpcAddr)
 
 			tokenID, err := util.DecodeHexAddress(args[1])
 			if err != nil {
@@ -142,55 +87,4 @@ func getEnrollRouterCmd() *cobra.Command {
 		},
 	}
 	return enrollRouterCmd
-}
-
-func getSetupZkIsmCmd() *cobra.Command {
-	deployCmd := &cobra.Command{
-		Use:   "setup-zkism [celestia-grpc] [evm-rpc] [ev-node-rpc]",
-		Short: "Deploy a new zk ism and configure it with an existing stack",
-		Args:  cobra.ExactArgs(3),
-		Run: func(cmd *cobra.Command, args []string) {
-			ctx := cmd.Context()
-			enc := encoding.MakeConfig(app.ModuleEncodingRegisters...)
-
-			grpcAddr := args[0]
-			grpcConn, err := grpc.NewClient(grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-			if err != nil {
-				log.Fatalf("failed to connect to gRPC: %v", err)
-			}
-			defer grpcConn.Close()
-
-			broadcaster := NewBroadcaster(enc, grpcConn)
-
-			evmRpcAddr := args[1]
-			client, err := ethclient.Dial(fmt.Sprintf("http://%s", evmRpcAddr))
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			evnodeRpcAddr := args[2]
-			evnode := evclient.NewClient(fmt.Sprintf("http://%s", evnodeRpcAddr))
-
-			ismID := SetupZKIsm(ctx, broadcaster, client, evnode)
-
-			hypQueryClient := coretypes.NewQueryClient(grpcConn)
-			mailboxResp, err := hypQueryClient.Mailboxes(ctx, &coretypes.QueryMailboxesRequest{})
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			mailbox := mailboxResp.Mailboxes[0]
-
-			warpQueryClient := warptypes.NewQueryClient(grpcConn)
-			tokenResp, err := warpQueryClient.Tokens(ctx, &warptypes.QueryTokensRequest{})
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			token := tokenResp.Tokens[0]
-
-			OverwriteIsm(ctx, broadcaster, ismID, mailbox, token)
-		},
-	}
-	return deployCmd
 }

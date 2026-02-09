@@ -30,7 +30,7 @@ check-dependencies:
 	@echo "All dependencies are installed."
 .PHONY: check-dependencies
 
-## start: Start all Docker containers for the demo.
+## start: Start all Docker containers (Celestia + Anvil + Hyperlane).
 start:
 	@echo "--> Starting all Docker containers"
 	@docker compose up --detach
@@ -42,16 +42,20 @@ stop:
 	@docker compose down -v
 .PHONY: stop
 
-## transfer: Transfer tokens from celestia-app to the EVM roll-up.
+## transfer: Transfer tokens from Celestia to Anvil via Hyperlane.
 transfer:
-	@echo "--> Transferring tokens from celestia-app to the EVM roll-up"
-	@docker run --rm \
-  		--network $(PROJECT_NAME)_celestia-zkevm-net \
-  		--volume $(PROJECT_NAME)_celestia-app:/home/celestia/.celestia-app \
-  		ghcr.io/celestiaorg/celestia-app-standalone:feature-zk-execution-ism \
-  		tx warp transfer 0x726f757465725f61707000000000000000000000000000010000000000000000 1234 0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d "10000000" \
-  		--from default --fees 800utia --max-hyperlane-fee 100utia --node http://celestia-validator:26657 --yes
-.PHONY: transfer
+	@echo "--> Transferring tokens from Celestia to Anvil (domain 1234)"
+	@docker exec celestia-validator celestia-appd tx warp transfer \
+		0x726f757465725f61707000000000000000000000000000010000000000000000 \
+		1234 \
+		0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
+		"1000000" \
+		--from default \
+		--fees 800utia \
+		--max-hyperlane-fee 100utia \
+		--node http://localhost:26657 \
+		--yes
+.PHONY: transfer-anvil
 
 ## send-to-address: Send tokens to a specified Celestia address for testing.
 ## Usage: make send-to-address ADDR=celestia1... AMOUNT=1000000
@@ -72,14 +76,24 @@ send-to-address:
 		--fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
 .PHONY: send-to-address
 
-## query-balance: Query the balance of the receiver in the EVM roll-up.
+## query-balance: Query wTIA token balance on Anvil (requires WARP_TOKEN env var).
+## Usage: WARP_TOKEN=0x... make query-balance
+## Or: WARP_TOKEN=0x... RECIPIENT=0x... make query-balance
 query-balance:
-	@echo "--> Querying the balance of the receiver on the EVM roll-up"
-	@cast call 0x345a583028762De4d733852c9D4f419077093A48 \
-  		"balanceOf(address)(uint256)" \
-  		0xaF9053bB6c4346381C77C2FeD279B17ABAfCDf4d \
-  		--rpc-url http://localhost:8545
-.PHONY: query-balance
+	@if [ -z "$(WARP_TOKEN)" ]; then \
+		echo "Error: WARP_TOKEN environment variable is required."; \
+		echo "Usage: WARP_TOKEN=0xYourTokenAddress make query-anvil-balance"; \
+		echo ""; \
+		echo "To find the token address, check:"; \
+		echo "  docker exec hyperlane-init cat /home/hyperlane/registry/deployments/warp_routes/TIA/anvil-addresses.yaml"; \
+		exit 1; \
+	fi; \
+	RECIPIENT=$${RECIPIENT:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}; \
+	echo "--> Querying wTIA balance on Anvil"; \
+	echo "Token: $(WARP_TOKEN)"; \
+	echo "Recipient: $$RECIPIENT"; \
+	cast call $(WARP_TOKEN) "balanceOf(address)(uint256)" $$RECIPIENT --rpc-url http://localhost:8545
+.PHONY: query-anvil-balance
 
 ## spamoor: Run spamoor transaction flooding against the EVM roll-up.
 spamoor:
@@ -89,15 +103,14 @@ spamoor:
 	@scripts/run-spamoor.sh $(ARGS)
 .PHONY: spamoor
 
-## derive-address: Derive the forwarding address for the default test parameters.
+## derive-address: Derive the forwarding address for Anvil (domain 1234).
 derive-address:
-	@echo "--> Deriving forwarding address"
+	@echo "--> Deriving forwarding address for Anvil (domain 1234)"
 	@echo "Domain: 1234"
-	@echo "Recipient: 0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d"
+	@echo "Recipient: 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 	@echo ""
-	@cargo test test_derive_forwarding_address_default -- --nocapture 2>&1 | grep "Derived address" || \
-		echo "Forwarding Address: celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e"
-.PHONY: derive-address
+	@docker exec celestia-validator celestia-appd query forwarding derive-address 1234 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+.PHONY: derive-address-anvil
 
 ## send-to-forward-addr: Send tokens to the default forwarding address for E2E testing.
 send-to-forward-addr:
@@ -113,9 +126,28 @@ send-to-forward-addr:
 	@$(MAKE) send-to-address ADDR=celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e AMOUNT=1000000
 .PHONY: send-to-forward-addr
 
+## e2e: Run end-to-end test.
 e2e:
-	cargo run --bin e2e -p e2e --release
+	@echo "--> Running E2E test"
+	@echo "This will verify services are running and provide manual testing instructions"
+	@cargo run --bin e2e -p e2e --release
 .PHONY: e2e
+
+## e2e-full: Start environment and run E2E test.
+e2e-full:
+	@echo "--> Starting environment and running E2E test"
+	@$(MAKE) start
+	@echo "Waiting for services to be healthy..."
+	@sleep 15
+	@$(MAKE) e2e
+.PHONY: e2e-full
+
+## e2e-auto: Fully automated E2E test (builds, starts services, funds, relays, verifies).
+e2e-auto:
+	@echo "--> Running fully automated E2E test"
+	@chmod +x scripts/run-e2e.sh
+	@scripts/run-e2e.sh
+.PHONY: e2e-auto
 
 docker-build-hyperlane:
 	@echo "--> Building hyperlane-init image"

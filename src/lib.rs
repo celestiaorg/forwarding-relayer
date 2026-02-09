@@ -27,6 +27,15 @@ pub enum Command {
     Relayer(RelayerConfig),
     /// Run the backend server
     Backend(BackendConfig),
+    /// Derive a forwarding address
+    DeriveAddress {
+        /// Destination domain (e.g., 1234 for Anvil)
+        #[arg(long)]
+        dest_domain: u32,
+        /// Destination recipient address (32-byte hex, e.g., 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
+        #[arg(long)]
+        dest_recipient: String,
+    },
 }
 
 /// Forwarding request from backend API

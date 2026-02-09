@@ -1,4 +1,4 @@
-FROM golang:1.24.6-alpine AS go-builder
+FROM golang:alpine AS go-builder
 
 WORKDIR /home/hyperlane
 
@@ -6,8 +6,13 @@ COPY hyperlane/go.* /home/hyperlane/
 COPY hyperlane/cmd /home/hyperlane/cmd
 
 # Build your Go CLI for cosmosnative deployment
-ARG TARGETARCH
-RUN GOARCH=$TARGETARCH GOOS=linux go build -o hyp ./cmd/hyp
+# Set GOTOOLCHAIN=auto to allow Go to download required version
+ENV GOTOOLCHAIN=auto
+ENV CGO_ENABLED=0
+ENV GOOS=linux
+ENV GOARCH=arm64
+# Workaround for sonic build issues - use go build with -tags nomsgpack to skip sonic optimizations
+RUN go build -tags nomsgpack -o hyp ./cmd/hyp
 
 FROM node:24-slim
 
