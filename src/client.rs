@@ -5,12 +5,63 @@ use cosmrs::{
     AccountId, Any as CosmosAny, Coin as CosmosCoin,
 };
 use prost::Message;
-use reqwest::Client as HttpClient;
-use serde::Deserialize;
 use tendermint_rpc::{Client as TendermintClient, HttpClient as TendermintHttpClient};
 use tracing::{info, warn};
 
 use crate::Balance;
+
+/// Protobuf types for ABCI queries
+mod query_proto {
+    /// QueryAllBalancesRequest for bank module
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct QueryAllBalancesRequest {
+        #[prost(string, tag = "1")]
+        pub address: String,
+    }
+
+    /// QueryAllBalancesResponse from bank module
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct QueryAllBalancesResponse {
+        #[prost(message, repeated, tag = "1")]
+        pub balances: Vec<Coin>,
+    }
+
+    /// Coin type
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct Coin {
+        #[prost(string, tag = "1")]
+        pub denom: String,
+        #[prost(string, tag = "2")]
+        pub amount: String,
+    }
+
+    /// QueryAccountRequest for auth module
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct QueryAccountRequest {
+        #[prost(string, tag = "1")]
+        pub address: String,
+    }
+
+    /// QueryAccountResponse from auth module
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct QueryAccountResponse {
+        #[prost(message, optional, tag = "1")]
+        pub account: Option<prost_types::Any>,
+    }
+
+    /// BaseAccount type
+    #[derive(Clone, PartialEq, prost::Message)]
+    pub struct BaseAccount {
+        #[prost(string, tag = "1")]
+        pub address: String,
+        #[prost(message, optional, tag = "2")]
+        pub pub_key: Option<prost_types::Any>,
+        #[prost(uint64, tag = "3")]
+        pub account_number: u64,
+        #[prost(uint64, tag = "4")]
+        pub sequence: u64,
+    }
+}
 
 /// MsgForward protobuf message for celestia.forwarding.v1
 #[derive(Clone, PartialEq, prost::Message)]
@@ -41,10 +92,10 @@ impl MsgForward {
 
 /// Celestia client for balance queries and transaction submission
 pub(crate) struct CelestiaClient {
+    #[allow(dead_code)]
     rpc_url: String,
     #[allow(dead_code)]
     grpc_url: String,
-    client: HttpClient,
     tendermint_client: TendermintHttpClient,
     signing_key: SigningKey,
     pub(crate) signer_address: AccountId,
@@ -74,7 +125,6 @@ impl CelestiaClient {
         Ok(Self {
             rpc_url,
             grpc_url,
-            client: HttpClient::new(),
             tendermint_client,
             signing_key,
             signer_address,
@@ -82,38 +132,42 @@ impl CelestiaClient {
         })
     }
 
-    /// Query balance at an address using RPC
+    /// Query balance at an address using Tendermint RPC ABCI query
     pub(crate) async fn query_balances(&self, address: &str) -> Result<Vec<Balance>> {
-        let url = format!("{}/cosmos/bank/v1beta1/balances/{}", self.rpc_url, address);
+        // Build the query request
+        let request = query_proto::QueryAllBalancesRequest {
+            address: address.to_string(),
+        };
 
+        let mut request_bytes = Vec::new();
+        Message::encode(&request, &mut request_bytes)?;
+
+        // Query via ABCI
         let response = self
-            .client
-            .get(&url)
-            .send()
+            .tendermint_client
+            .abci_query(
+                Some("/cosmos.bank.v1beta1.Query/AllBalances".to_string()),
+                request_bytes,
+                None,
+                false,
+            )
             .await
-            .context("Failed to query balance")?;
+            .context("Failed to query balances via ABCI")?;
 
-        if !response.status().is_success() {
-            anyhow::bail!("RPC returned error: {}", response.status());
+        if response.code.is_err() {
+            anyhow::bail!(
+                "ABCI query failed: code={:?}, log={}",
+                response.code,
+                response.log
+            );
         }
 
-        #[derive(Deserialize)]
-        struct BalanceResponse {
-            balances: Vec<CoinResponse>,
-        }
+        // Decode the response
+        let balance_response: query_proto::QueryAllBalancesResponse =
+            Message::decode(response.value.as_slice())
+                .context("Failed to decode balance response")?;
 
-        #[derive(Deserialize)]
-        struct CoinResponse {
-            denom: String,
-            amount: String,
-        }
-
-        let resp = response
-            .json::<BalanceResponse>()
-            .await
-            .context("Failed to parse balance response")?;
-
-        Ok(resp
+        Ok(balance_response
             .balances
             .into_iter()
             .map(|c| Balance {
@@ -123,46 +177,56 @@ impl CelestiaClient {
             .collect())
     }
 
-    /// Query IGP fee quote for a destination domain
+    /// Query IGP fee quote for a destination domain using Tendermint RPC ABCI query
     pub(crate) async fn query_igp_fee(&self, dest_domain: u32) -> Result<String> {
-        let url = format!(
-            "{}/celestia/forwarding/v1/quote_fee/{}",
-            self.rpc_url, dest_domain
-        );
+        // Build the query request for the forwarding module
+        // The protobuf message for QuoteFeeRequest
+        #[derive(Clone, PartialEq, prost::Message)]
+        struct QuoteFeeRequest {
+            #[prost(uint32, tag = "1")]
+            dest_domain: u32,
+        }
 
+        #[derive(Clone, PartialEq, prost::Message)]
+        struct QuoteFeeResponse {
+            #[prost(message, optional, tag = "1")]
+            fee: Option<query_proto::Coin>,
+        }
+
+        let request = QuoteFeeRequest { dest_domain };
+
+        let mut request_bytes = Vec::new();
+        Message::encode(&request, &mut request_bytes)?;
+
+        // Query via ABCI
         let response = self
-            .client
-            .get(&url)
-            .send()
+            .tendermint_client
+            .abci_query(
+                Some("/celestia.forwarding.v1.Query/QuoteForwardingFee".to_string()),
+                request_bytes,
+                None,
+                false,
+            )
             .await
-            .context("Failed to query IGP fee")?;
+            .context("Failed to query IGP fee via ABCI")?;
 
-        if !response.status().is_success() {
+        if response.code.is_err() {
             warn!(
-                "Failed to query IGP fee for domain {}: {}",
-                dest_domain,
-                response.status()
+                "Failed to query IGP fee for domain {}: code={:?}, log={}",
+                dest_domain, response.code, response.log
             );
             // Return a default fee of 0 if query fails
             return Ok("0".to_string());
         }
 
-        #[derive(Deserialize)]
-        struct FeeResponse {
-            fee: CoinResponse,
-        }
+        // Decode the response
+        let fee_response: QuoteFeeResponse = Message::decode(response.value.as_slice())
+            .context("Failed to decode fee response")?;
 
-        #[derive(Deserialize)]
-        struct CoinResponse {
-            amount: String,
-        }
-
-        let resp = response
-            .json::<FeeResponse>()
-            .await
-            .context("Failed to parse fee response")?;
-
-        Ok(resp.fee.amount)
+        Ok(fee_response
+            .fee
+            .map(|f| f.amount)
+            .unwrap_or_else(|| "0".to_string()))
     }
 
     /// Submit a forwarding transaction
@@ -247,40 +311,52 @@ impl CelestiaClient {
         Ok(tx_hash)
     }
 
-    /// Query account number and sequence
+    /// Query account number and sequence using Tendermint RPC ABCI query
     async fn query_account(&self, address: &str) -> Result<AccountInfo> {
-        let url = format!("{}/cosmos/auth/v1beta1/accounts/{}", self.rpc_url, address);
+        // Build the query request
+        let request = query_proto::QueryAccountRequest {
+            address: address.to_string(),
+        };
 
+        let mut request_bytes = Vec::new();
+        Message::encode(&request, &mut request_bytes)?;
+
+        // Query via ABCI
         let response = self
-            .client
-            .get(&url)
-            .send()
+            .tendermint_client
+            .abci_query(
+                Some("/cosmos.auth.v1beta1.Query/Account".to_string()),
+                request_bytes,
+                None,
+                false,
+            )
             .await
-            .context("Failed to query account")?;
+            .context("Failed to query account via ABCI")?;
 
-        if !response.status().is_success() {
-            anyhow::bail!("Failed to query account: {}", response.status());
+        if response.code.is_err() {
+            anyhow::bail!(
+                "ABCI query failed: code={:?}, log={}",
+                response.code,
+                response.log
+            );
         }
 
-        #[derive(Deserialize)]
-        struct AccountResponse {
-            account: Account,
-        }
+        // Decode the response
+        let account_response: query_proto::QueryAccountResponse =
+            Message::decode(response.value.as_slice())
+                .context("Failed to decode account response")?;
 
-        #[derive(Deserialize)]
-        struct Account {
-            account_number: String,
-            sequence: String,
-        }
+        let account_any = account_response
+            .account
+            .ok_or_else(|| anyhow::anyhow!("Account not found"))?;
 
-        let resp = response
-            .json::<AccountResponse>()
-            .await
-            .context("Failed to parse account response")?;
+        // The account is wrapped in an Any type, decode the BaseAccount
+        let base_account: query_proto::BaseAccount = Message::decode(account_any.value.as_slice())
+            .context("Failed to decode BaseAccount")?;
 
         Ok(AccountInfo {
-            account_number: resp.account.account_number.parse()?,
-            sequence: resp.account.sequence.parse()?,
+            account_number: base_account.account_number,
+            sequence: base_account.sequence,
         })
     }
 

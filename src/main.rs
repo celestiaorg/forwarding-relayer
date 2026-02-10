@@ -26,5 +26,14 @@ async fn main() -> Result<()> {
             let backend = Backend::new(config.port, config.db_path)?;
             backend.serve().await
         }
+        Command::DeriveAddress {
+            dest_domain,
+            dest_recipient,
+        } => {
+            // Derive forwarding address
+            let address = forwarding_relayer::derive_forwarding_address(dest_domain, &dest_recipient)?;
+            println!("{}", address);
+            Ok(())
+        }
     }
 }

@@ -20,7 +20,7 @@ gasPrice:
 grpcUrls:
   - http: http://localhost:9090
 isTestnet: true
-name: celestia
+name: celestiadev
 nativeToken:
   decimals: 6
   denom: utia

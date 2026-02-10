@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=../schema.json
 tokens:
-  - addressOrDenom: "0x345a583028762De4d733852c9D4f419077093A48"
+  - addressOrDenom: "0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1"
     chainName: rethlocal
     decimals: 6
     name: wTIA

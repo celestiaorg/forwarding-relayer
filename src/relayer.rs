@@ -14,11 +14,11 @@ use crate::{Balance, ForwardingRequest, StatusUpdate};
 /// Relayer configuration
 #[derive(Parser, Debug)]
 pub struct RelayerConfig {
-    /// Celestia RPC URL
+    /// Celestia Tendermint RPC URL (port 26657)
     #[arg(long, env = "CELESTIA_RPC", default_value = "http://localhost:26657")]
     pub celestia_rpc: String,
 
-    /// Celestia gRPC URL
+    /// Celestia gRPC URL (port 9090)
     #[arg(long, env = "CELESTIA_GRPC", default_value = "http://localhost:9090")]
     pub celestia_grpc: String,
 
@@ -149,12 +149,11 @@ pub struct Relayer {
 
 impl Relayer {
     pub async fn new(config: RelayerConfig) -> Result<Self> {
-        // For tendermint RPC, use port 26657 by default
-        let tendermint_rpc_url = config.celestia_rpc.replace(":1317", ":26657");
-
+        // CELESTIA_RPC is now the Tendermint RPC URL (port 26657)
+        // All queries use ABCI queries via Tendermint RPC
         let celestia = CelestiaClient::new(
-            config.celestia_rpc.clone(),
-            tendermint_rpc_url,
+            config.celestia_rpc.clone(), // kept for compatibility, not used
+            config.celestia_rpc.clone(), // Tendermint RPC URL
             config.celestia_grpc.clone(),
             config.relayer_mnemonic.clone(),
             config.chain_id.clone(),
@@ -336,6 +335,12 @@ impl Relayer {
             request.dest_domain, quoted_fee, max_igp_fee, self.config.igp_fee_buffer
         );
 
+        // Update balance cache BEFORE submitting transaction to prevent duplicate submissions
+        // This ensures that even if the transaction is pending in mempool, we won't retry
+        self.cached_balances
+            .insert(forward_addr.clone(), balances.clone());
+        self.balance_cache.save(forward_addr, &balances)?;
+
         // Submit forwarding transaction
         match self
             .celestia
@@ -358,12 +363,13 @@ impl Relayer {
                     );
                 }
 
-                // Clear balance cache for this address
+                // Clear balance cache for this address now that forwarding is complete
                 self.cached_balances.remove(forward_addr);
                 self.balance_cache.remove(forward_addr)?;
             }
             Err(e) => {
                 error!("Failed to submit forwarding for {}: {:#}", forward_addr, e);
+                // Note: We keep the updated balance cache to prevent retrying the same transaction
             }
         }
 

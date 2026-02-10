@@ -1,16 +1,20 @@
 {
     "chains": {
-        "rethlocal": {
+        "anvil": {
             "blocks": {
                 "confirmations": 1,
                 "estimateBlockTime": 1,
                 "reorgPeriod": 0
             },
-            "chainId": 1234,
-            "displayName": "Anvil Local",
-            "domainId": 1234,
+            "chainId": 31337,
+            "displayName": "Anvilnode1",
+            "domain": 31337,
             "isTestnet": true,
-            "name": "rethlocal",
+            "name": "anvil",
+            "index": {
+                "from": 1,
+                "chunk": 10
+            },
             "nativeToken": {
                 "decimals": 18,
                 "name": "Ether",
@@ -39,14 +43,14 @@
                 "reorgPeriod": 1
             },
             "canonicalAsset": "utia",
-            "chainId": "celestia-zkevm-testnet",
+            "chainId": "celestia",
             "contractAddressBytes": 32,
             "deployer": {
                 "name": "Damian",
                 "url": "https://github.com/damiannolan"
             },
             "displayName": "Celestia ZKEVM Testnet",
-            "domainId": 69420,
+            "domain": 69420,
             "gasPrice": {
                 "denom": "utia",
                 "amount": "0.1"
@@ -86,8 +90,8 @@
             },
             "interchainSecurityModule": "0x726f757465725f69736d00000000000000000000000000000000000000000000",
             "mailbox": "0x68797065726c616e650000000000000000000000000000000000000000000000",
-            "interchainGasPaymaster": "0x726f757465725f706f73745f6469737061746368000000000000000000000001",
-            "merkleTreeHook": "0x726f757465725f706f73745f6469737061746368000000030000000000000002",
+            "interchainGasPaymaster": "0x726f757465725f706f73745f6469737061746368000000000000000000000000",
+            "merkleTreeHook": "0x726f757465725f706f73745f6469737061746368000000030000000000000001",
             "validatorAnnounce": "0x68797065726c616e650000000000000000000000000000000000000000000000",
             "grpcUrls": [
                 {
@@ -97,5 +101,5 @@
         }
     },
     "defaultRpcConsensusType": "fallback",
-    "relayChains": "rethlocal,celestiadev"
+    "relayChains": "anvil,celestiadev"
 }

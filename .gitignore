@@ -1,4 +1,4 @@
-/target
+**/target/
 
 # Storage directory for database files
 /storage/
@@ -7,3 +7,6 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Build artifacts
+hyperlane/hyp

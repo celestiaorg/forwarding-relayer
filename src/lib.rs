@@ -27,6 +27,15 @@ pub enum Command {
     Relayer(RelayerConfig),
     /// Run the backend server
     Backend(BackendConfig),
+    /// Derive a forwarding address
+    DeriveAddress {
+        /// Destination domain (e.g., 1234 for Anvil)
+        #[arg(long)]
+        dest_domain: u32,
+        /// Destination recipient address (32-byte hex, e.g., 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
+        #[arg(long)]
+        dest_recipient: String,
+    },
 }
 
 /// Forwarding request from backend API
@@ -60,6 +69,23 @@ pub struct StatusUpdate {
 pub struct Balance {
     pub denom: String,
     pub amount: String,
+}
+
+/// Derive a Celestia account address from a BIP39 mnemonic.
+/// Uses BIP44 derivation path m/44'/118'/0'/0/0 (standard Cosmos).
+pub fn derive_relayer_address(mnemonic: &str) -> Result<String> {
+    use cosmrs::crypto::secp256k1::SigningKey;
+
+    let seed = bip39::Mnemonic::parse(mnemonic)
+        .map_err(|e| anyhow::anyhow!("Invalid mnemonic: {}", e))?
+        .to_seed("");
+    let path: bip32::DerivationPath = "m/44'/118'/0'/0/0".parse()?;
+    let signing_key = SigningKey::derive_from_path(seed, &path)?;
+    let address = signing_key
+        .public_key()
+        .account_id("celestia")
+        .map_err(|e| anyhow::anyhow!("Failed to derive address: {}", e))?;
+    Ok(address.to_string())
 }
 
 /// Derive a forwarding address from dest_domain and dest_recipient
