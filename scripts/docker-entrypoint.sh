@@ -13,7 +13,7 @@ case "$MODE" in
       --celestia-rpc "${CELESTIA_RPC:-http://celestia-validator:26657}" \
       --celestia-grpc "${CELESTIA_GRPC:-http://celestia-validator:9090}" \
       --backend-url "${BACKEND_URL:-http://forwarding-backend:8080}" \
-      --relayer-mnemonic "${RELAYER_MNEMONIC:?RELAYER_MNEMONIC is required}" \
+      --relayer-private-key-hex "${RELAYER_PRIVATE_KEY_HEX:?RELAYER_PRIVATE_KEY_HEX is required}" \
       --chain-id "${CHAIN_ID:-celestia-zkevm-testnet}" \
       --poll-interval "${POLL_INTERVAL:-6}" \
       --igp-fee-buffer "${IGP_FEE_BUFFER:-1.1}" \

@@ -128,7 +128,7 @@ services:
       - CELESTIA_RPC=http://celestia-validator:26657
       - CELESTIA_GRPC=http://celestia-validator:9090
       - BACKEND_URL=http://forwarding-backend:8080
-      - RELAYER_MNEMONIC=veteran capital explain keep focus nuclear police casino exercise pitch hover job sleep slam wasp honey tenant breeze hold hat quality upper multiply gossip
+      - RELAYER_PRIVATE_KEY_HEX=5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5
       - CHAIN_ID=celestia-zkevm-testnet
       - POLL_INTERVAL=6
       - IGP_FEE_BUFFER=1.1
