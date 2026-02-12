@@ -51,7 +51,7 @@ All defaults work out of the box. If you need to customize:
 | `--warp-token` | `WARP_TOKEN` | Auto-detected | wTIA token address on Anvil |
 | `--recipient` | | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | Recipient on Anvil |
 | `--backend-port` | | `8080` | Backend API port |
-| `--relayer-private-key-hex` | `RELAYER_PRIVATE_KEY_HEX` | Test private key hex | secp256k1 private key for signing Celestia txs |
+| `--private-key-hex` | `PRIVATE_KEY_HEX` | Test private key hex | secp256k1 private key for signing Celestia txs |
 | `--fund-amount` | | `1000000` | Amount of utia to forward |
 | `--dest-domain` | | `1234` | Hyperlane destination domain |
 | `--timeout-secs` | | `120` | Max wait time for balance change |

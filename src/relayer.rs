@@ -27,8 +27,8 @@ pub struct RelayerConfig {
     pub backend_url: String,
 
     /// Relayer secp256k1 private key hex (for signing transactions)
-    #[arg(long, env = "RELAYER_PRIVATE_KEY_HEX")]
-    pub relayer_private_key_hex: String,
+    #[arg(long, env = "PRIVATE_KEY_HEX")]
+    pub private_key_hex: String,
 
     /// Celestia chain ID
     #[arg(long, env = "CHAIN_ID", default_value = "celestia-zkevm-testnet")]
@@ -155,7 +155,7 @@ impl Relayer {
             config.celestia_rpc.clone(), // kept for compatibility, not used
             config.celestia_rpc.clone(), // Tendermint RPC URL
             config.celestia_grpc.clone(),
-            config.relayer_private_key_hex.clone(),
+            config.private_key_hex.clone(),
             config.chain_id.clone(),
         )
         .await?;

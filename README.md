@@ -110,7 +110,7 @@ curl -X POST http://localhost:8080/forwarding-requests \
 RUST_LOG=info ./target/release/forwarding-relayer relayer \
   --celestia-rpc http://localhost:26657 \
   --backend-url http://localhost:8080 \
-  --relayer-private-key-hex "5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5"
+  --private-key-hex "5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5"
 ```
 
 ### 6. Send tokens and verify

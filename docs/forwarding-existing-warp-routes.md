@@ -115,7 +115,7 @@ RUST_LOG=info ./target/release/forwarding-relayer relayer \
   --celestia-rpc http://localhost:26657 \
   --celestia-grpc http://localhost:9090 \
   --backend-url http://localhost:8080 \
-  --relayer-private-key-hex "5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5"
+  --private-key-hex "5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5"
 ```
 
 Leave this running. It polls the backend for forwarding requests and watches for balance changes every 6 seconds.
@@ -127,7 +127,7 @@ Leave this running. It polls the backend for forwarding requests and watches for
 | `--celestia-rpc` | `CELESTIA_RPC` | `http://localhost:26657` | Tendermint RPC URL |
 | `--celestia-grpc` | `CELESTIA_GRPC` | `http://localhost:9090` | Cosmos SDK gRPC URL |
 | `--backend-url` | `BACKEND_URL` | `http://localhost:8080` | Backend API URL |
-| `--relayer-private-key-hex` | `RELAYER_PRIVATE_KEY_HEX` | (required) | secp256k1 private key hex for signing |
+| `--private-key-hex` | `PRIVATE_KEY_HEX` | (required) | secp256k1 private key hex for signing |
 | `--chain-id` | `CHAIN_ID` | `celestia-zkevm-testnet` | Celestia chain ID |
 | `--poll-interval` | `POLL_INTERVAL` | `6` | Seconds between poll cycles |
 | `--igp-fee-buffer` | `IGP_FEE_BUFFER` | `1.1` | Multiplier on quoted IGP fee |
