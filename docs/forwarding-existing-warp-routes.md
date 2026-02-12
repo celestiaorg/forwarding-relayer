@@ -102,11 +102,11 @@ The relayer needs gas to submit `MsgForward` transactions on Celestia:
 
 ```bash
 docker exec celestia-validator celestia-appd tx bank send \
-  default celestia1ehy4f4a0y6zue7xvdr0zuvsawplh7tkh0xlws3 10000000utia \
+  default celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q 10000000utia \
   --fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
 ```
 
-The relayer address `celestia1ehy4f4a0y6zue7xvdr0zuvsawplh7tkh0xlws3` corresponds to the default test private key hex. If you use a custom key, derive and fund that address instead.
+The relayer address `celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q` corresponds to the default test private key hex. If you use a custom key, derive and fund that address instead.
 
 ## Step 7: Start the Forwarding Relayer
 
@@ -115,7 +115,7 @@ RUST_LOG=info ./target/release/forwarding-relayer relayer \
   --celestia-rpc http://localhost:26657 \
   --celestia-grpc http://localhost:9090 \
   --backend-url http://localhost:8080 \
-  --private-key-hex "5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5"
+  --private-key-hex "6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c"
 ```
 
 Leave this running. It polls the backend for forwarding requests and watches for balance changes every 6 seconds.

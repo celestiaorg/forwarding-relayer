@@ -36,6 +36,12 @@ pub enum Command {
         #[arg(long)]
         dest_recipient: String,
     },
+    /// Derive a private key from a mnemonic
+    DerivePrivateKey {
+        /// BIP39 mnemonic phrase
+        #[arg(long)]
+        mnemonic: String,
+    },
 }
 
 /// Forwarding request from backend API
@@ -84,6 +90,30 @@ pub fn derive_relayer_address_from_private_key_hex(private_key_hex: &str) -> Res
         .account_id("celestia")
         .map_err(|e| anyhow::anyhow!("Failed to derive address: {}", e))?;
     Ok(address.to_string())
+}
+
+/// Derive a secp256k1 private key from a BIP39 mnemonic using standard Cosmos derivation path.
+/// Returns the private key as a hex string.
+pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
+    use cosmrs::bip32::{DerivationPath, XPrv};
+
+    // Parse the mnemonic and convert to seed
+    let mnemonic_parsed = bip39::Mnemonic::parse(mnemonic)
+        .map_err(|e| anyhow::anyhow!("Invalid mnemonic: {}", e))?;
+    let seed = mnemonic_parsed.to_seed("");
+
+    // Standard Cosmos HD path: m/44'/118'/0'/0/0
+    let path: DerivationPath = "m/44'/118'/0'/0/0"
+        .parse()
+        .context("Failed to parse derivation path")?;
+
+    // Derive the extended private key
+    let xprv = XPrv::derive_from_path(&seed, &path).context("Failed to derive key from path")?;
+
+    // Get the raw private key bytes (32 bytes)
+    let private_key_bytes = xprv.to_bytes();
+
+    Ok(hex::encode(&private_key_bytes))
 }
 
 /// Derive a forwarding address from dest_domain and dest_recipient

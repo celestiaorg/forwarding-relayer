@@ -133,7 +133,7 @@ services:
       - CELESTIA_RPC=http://celestia-validator:26657
       - CELESTIA_GRPC=http://celestia-validator:9090
       - BACKEND_URL=http://forwarding-backend:8080
-      - PRIVATE_KEY_HEX=5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5
+      - PRIVATE_KEY_HEX=6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c
       - CHAIN_ID=celestia-zkevm-testnet
       - POLL_INTERVAL=6
       - IGP_FEE_BUFFER=1.1

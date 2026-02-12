@@ -35,5 +35,11 @@ async fn main() -> Result<()> {
             println!("{}", address);
             Ok(())
         }
+        Command::DerivePrivateKey { mnemonic } => {
+            // Derive private key from mnemonic
+            let private_key = forwarding_relayer::derive_private_key_from_mnemonic(&mnemonic)?;
+            println!("{}", private_key);
+            Ok(())
+        }
     }
 }

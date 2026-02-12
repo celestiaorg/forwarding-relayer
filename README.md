@@ -78,7 +78,7 @@ The relayer needs gas for `MsgForward` transactions:
 
 ```bash
 docker exec celestia-validator celestia-appd tx bank send \
-  default celestia1ehy4f4a0y6zue7xvdr0zuvsawplh7tkh0xlws3 10000000utia \
+  default celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q 10000000utia \
   --fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
 ```
 
@@ -110,7 +110,7 @@ curl -X POST http://localhost:8080/forwarding-requests \
 RUST_LOG=info ./target/release/forwarding-relayer relayer \
   --celestia-rpc http://localhost:26657 \
   --backend-url http://localhost:8080 \
-  --private-key-hex "5b7dab3c8c9d74c69cc54ce1e0d3815100d141ef6efa47af12e694bc80185be5"
+  --private-key-hex "6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c"
 ```
 
 ### 6. Send tokens and verify
@@ -141,7 +141,7 @@ cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xf39Fd6e51aad88F6F4ce6aB882
 | Celestia domain | 69420 |
 | Anvil domain | 1234 |
 | Anvil test account | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
-| Relayer address | `celestia1ehy4f4a0y6zue7xvdr0zuvsawplh7tkh0xlws3` |
+| Relayer address | `celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q` |
 | ISM | NoopISM (testing only) |
 
 ## Makefile Targets
