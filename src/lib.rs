@@ -77,11 +77,6 @@ pub fn derive_relayer_address_from_private_key_hex(private_key_hex: &str) -> Res
 
     let private_key_hex = private_key_hex.trim().trim_start_matches("0x");
     let private_key = hex::decode(private_key_hex).context("Invalid private key hex")?;
-    anyhow::ensure!(
-        private_key.len() == 32,
-        "Private key must be 32 bytes, got {} bytes",
-        private_key.len()
-    );
     let signing_key = SigningKey::from_slice(&private_key)
         .map_err(|e| anyhow::anyhow!("Invalid secp256k1 private key: {}", e))?;
     let address = signing_key

@@ -111,12 +111,7 @@ impl CelestiaClient {
         chain_id: String,
     ) -> Result<Self> {
         let private_key_hex = private_key_hex.trim().trim_start_matches("0x");
-        let private_key = hex::decode(private_key_hex).context("Invalid relayer private key hex")?;
-        anyhow::ensure!(
-            private_key.len() == 32,
-            "Relayer private key must be 32 bytes, got {} bytes",
-            private_key.len()
-        );
+        let private_key = hex::decode(private_key_hex).context("Invalid private key hex")?;
         let signing_key = SigningKey::from_slice(&private_key)
             .map_err(|e| anyhow::anyhow!("Invalid secp256k1 private key: {}", e))?;
         let signer_address = signing_key
