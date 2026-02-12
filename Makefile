@@ -126,8 +126,10 @@ send-to-forward-addr:
 	@$(MAKE) send-to-address ADDR=celestia1tlgp3xflevxl4q9defk8g399qahjcusx7d4r5e AMOUNT=1000000
 .PHONY: send-to-forward-addr
 
-## e2e: Run end-to-end test (starts containers, waits for Hyperlane deployment, then runs test).
+## e2e: Run end-to-end test (starts all containers including forwarding services, waits for deployment, then runs test).
 e2e:
+	@echo "--> Building forwarding-relayer Docker image"
+	@docker build -t forwarding-relayer:local -f Dockerfile .
 	@echo "--> Starting Docker containers"
 	@docker compose up --detach
 	@echo "--> Waiting for Hyperlane deployment to complete..."
@@ -148,12 +150,45 @@ e2e:
 		echo "  Waiting... ($${elapsed}s/$${timeout}s) - status: $$status"; \
 	done; \
 	if [ $$elapsed -ge $$timeout ]; then echo "ERROR: Timed out waiting for Hyperlane deployment"; exit 1; fi
+	@echo "--> Waiting for forwarding services to be healthy..."
+	@timeout=30; elapsed=0; while [ $$elapsed -lt $$timeout ]; do \
+		backend_health=$$(docker inspect forwarding-backend --format='{{.State.Health.Status}}' 2>/dev/null || echo "unknown"); \
+		if [ "$$backend_health" = "healthy" ]; then \
+			echo "Forwarding backend is healthy"; \
+			break; \
+		fi; \
+		sleep 2; elapsed=$$((elapsed + 2)); \
+		echo "  Waiting for backend... ($${elapsed}s/$${timeout}s) - health: $$backend_health"; \
+	done; \
+	if [ $$elapsed -ge $$timeout ]; then echo "ERROR: Timed out waiting for forwarding backend"; exit 1; fi
+	@echo "--> Forwarding relayer starting (logs: make logs-relayer)"
 	@echo "--> Running E2E test"
 	@cargo run --bin e2e -p e2e --release
 .PHONY: e2e
 
 
+## docker-build-hyperlane: Build Hyperlane init Docker image.
 docker-build-hyperlane:
 	@echo "--> Building hyperlane-init image"
 	@docker build -t ghcr.io/celestiaorg/hyperlane-init:local -f hyperlane/Dockerfile .
 .PHONY: docker-build-hyperlane
+
+## docker-build-relayer: Build forwarding-relayer Docker image.
+docker-build-relayer:
+	@echo "--> Building forwarding-relayer image"
+	@docker build -t forwarding-relayer:local -f Dockerfile .
+.PHONY: docker-build-relayer
+
+## docker-build: Build all Docker images.
+docker-build: docker-build-hyperlane docker-build-relayer
+.PHONY: docker-build
+
+## logs-backend: Show logs for the forwarding backend service.
+logs-backend:
+	@docker logs -f forwarding-backend
+.PHONY: logs-backend
+
+## logs-relayer: Show logs for the forwarding relayer service.
+logs-relayer:
+	@docker logs -f forwarding-relayer
+.PHONY: logs-relayer

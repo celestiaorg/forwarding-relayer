@@ -2,11 +2,10 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
-use std::path::PathBuf;
 use std::time::Duration;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
-use forwarding_relayer::{Backend, CreateForwardingRequest, ForwardingRequest, Relayer, RelayerConfig};
+use forwarding_relayer::{CreateForwardingRequest, ForwardingRequest};
 
 const DEFAULT_RECIPIENT: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const WARP_ROUTE_CONFIG_PATH: &str =
@@ -31,18 +30,6 @@ struct Args {
     /// Backend port
     #[arg(long, default_value = "8080")]
     backend_port: u16,
-
-    /// Celestia Tendermint RPC URL
-    #[arg(long, default_value = "http://localhost:26657")]
-    celestia_rpc: String,
-
-    /// Relayer mnemonic for signing Celestia transactions
-    #[arg(
-        long,
-        env = "RELAYER_MNEMONIC",
-        default_value = "veteran capital explain keep focus nuclear police casino exercise pitch hover job sleep slam wasp honey tenant breeze hold hat quality upper multiply gossip"
-    )]
-    relayer_mnemonic: String,
 
     /// Amount to send to forwarding address (in utia)
     #[arg(long, default_value = "1000000")]
@@ -71,7 +58,7 @@ async fn main() -> Result<()> {
 
     info!("=== Forwarding Relayer E2E Test ===");
     info!("Anvil RPC: {}", args.anvil_rpc);
-    info!("Celestia RPC: {}", args.celestia_rpc);
+    info!("Backend URL: {}", backend_url);
     info!("Recipient: {}", args.recipient);
 
     // Auto-detect warp token address from deployment files
@@ -82,10 +69,6 @@ async fn main() -> Result<()> {
         )?,
     };
     info!("Warp token: {}", warp_token);
-
-    // Derive relayer address from mnemonic
-    let relayer_addr = forwarding_relayer::derive_relayer_address(&args.relayer_mnemonic)?;
-    info!("Relayer address: {}", relayer_addr);
 
     // Compute 32-byte padded recipient for Hyperlane
     let dest_recipient = format!(
@@ -98,16 +81,13 @@ async fn main() -> Result<()> {
         forwarding_relayer::derive_forwarding_address(args.dest_domain, &dest_recipient)?;
     info!("Forwarding address: {}", forward_addr);
 
-    // Clean up temp DB files from previous runs
-    let backend_db = PathBuf::from("/tmp/e2e-backend.db");
-    let cache_db = PathBuf::from("/tmp/e2e-balance-cache.db");
-    let _ = std::fs::remove_file(&backend_db);
-    let _ = std::fs::remove_file(&cache_db);
-
     // === Step 1: Verify services ===
     info!("\n--- Step 1: Verifying services ---");
     verify_anvil_running(&args.anvil_rpc).await?;
     info!("Anvil is running");
+
+    verify_backend_running(&backend_url).await?;
+    info!("Backend is running");
 
     // === Step 2: Query initial balance ===
     info!("\n--- Step 2: Querying initial balance ---");
@@ -115,19 +95,8 @@ async fn main() -> Result<()> {
         query_erc20_balance(&args.anvil_rpc, &warp_token, &args.recipient).await?;
     info!("Initial wTIA balance: {}", initial_balance);
 
-    // === Step 3: Start backend + create forwarding request ===
+    // === Step 3: Create forwarding request ===
     info!("\n--- Step 3: Creating forwarding request ---");
-
-    let backend = Backend::new(args.backend_port, backend_db.clone())?;
-    let backend_handle = tokio::spawn(async move {
-        if let Err(e) = backend.serve().await {
-            error!("Backend error: {:#}", e);
-        }
-    });
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    verify_backend_running(&backend_url).await?;
-    info!("Backend started on port {}", args.backend_port);
 
     let http_client = reqwest::Client::new();
     let create_req = CreateForwardingRequest {
@@ -153,42 +122,8 @@ async fn main() -> Result<()> {
         created.id, forward_addr
     );
 
-    // === Step 4: Fund relayer account on Celestia ===
-    info!("\n--- Step 4: Funding relayer account on Celestia ---");
-    info!("Funding relayer account: {}", relayer_addr);
-    fund_celestia_account(&relayer_addr, 10_000_000)?;
-
-    info!("Waiting for funding tx to confirm...");
-    tokio::time::sleep(Duration::from_secs(8)).await;
-
-    // === Step 5: Start forwarding relayer ===
-    info!("\n--- Step 5: Starting forwarding relayer ---");
-
-    let relayer_config = RelayerConfig {
-        celestia_rpc: args.celestia_rpc.clone(),
-        celestia_grpc: "http://localhost:9090".to_string(),
-        backend_url: backend_url.clone(),
-        relayer_mnemonic: args.relayer_mnemonic.clone(),
-        chain_id: "celestia-zkevm-testnet".to_string(),
-        poll_interval: 6,
-        igp_fee_buffer: 1.1,
-        balance_cache_path: cache_db.clone(),
-    };
-
-    let relayer_handle = tokio::spawn(async move {
-        match Relayer::new(relayer_config).await {
-            Ok(mut relayer) => {
-                if let Err(e) = relayer.run().await {
-                    error!("Relayer error: {:#}", e);
-                }
-            }
-            Err(e) => error!("Failed to create relayer: {:#}", e),
-        }
-    });
-
-    info!("Relayer started, waiting for initialization...");
-    tokio::time::sleep(Duration::from_secs(3)).await;
-
+    // === Step 4: Fund forwarding address ===
+    info!("\n--- Step 4: Funding forwarding address ---");
     // Fund the forwarding address — this triggers the relayer to detect a balance change
     info!(
         "Funding forwarding address {} with {}utia",
@@ -196,8 +131,8 @@ async fn main() -> Result<()> {
     );
     fund_celestia_account(&forward_addr, args.fund_amount)?;
 
-    // === Step 6: Wait for Hyperlane relay ===
-    info!("\n--- Step 6: Waiting for forwarding + Hyperlane relay ---");
+    // === Step 5: Wait for Hyperlane relay ===
+    info!("\n--- Step 5: Waiting for forwarding + Hyperlane relay ---");
     info!(
         "Polling for balance change (timeout: {}s)...",
         args.timeout_secs
@@ -231,16 +166,10 @@ async fn main() -> Result<()> {
         }
     }
 
-    // === Step 7: Verify final balance ===
-    info!("\n--- Step 7: Results ---");
+    // === Step 6: Verify final balance ===
+    info!("\n--- Step 6: Results ---");
     info!("Initial balance: {}", initial_balance);
     info!("Final balance:   {}", final_balance);
-
-    // Cleanup background tasks and temp files
-    relayer_handle.abort();
-    backend_handle.abort();
-    let _ = std::fs::remove_file(&backend_db);
-    let _ = std::fs::remove_file(&cache_db);
 
     if final_balance > initial_balance {
         let forwarded = final_balance - initial_balance;

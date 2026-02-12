@@ -28,8 +28,8 @@ SUCCESS! 1000000 utia forwarded from Celestia to Anvil as wTIA
 
 The `make e2e` target runs through these steps automatically:
 
-1. **Starts Docker containers** -- Celestia validator, bridge node, Anvil (EVM), Hyperlane init, and the Hyperlane relayer.
-2. **Waits for Hyperlane deployment** -- The `hyperlane-init` container deploys core contracts and warp route tokens on both chains. This takes ~30-60s.
+1. **Starts Docker containers**: Celestia validator, bridge node, Anvil (EVM), Hyperlane init, and the Hyperlane relayer.
+2. **Waits for Hyperlane deployment**: The `hyperlane-init` container deploys core contracts and warp route tokens on both chains. This takes ~30-60s.
 3. **Runs the E2E binary** (`cargo run --bin e2e -p e2e --release`), which:
    - Verifies Anvil is running
    - Queries the initial wTIA balance on Anvil
@@ -99,7 +99,7 @@ docker logs celestia-validator
 
 Common causes:
 - Hyperlane relayer hasn't synced yet (wait longer, increase `--timeout-secs`)
-- gRPC port conflict -- ensure nothing else is binding to port 9090
+- gRPC port conflict: ensure nothing else is binding to port 9090
 
 ### "Failed to connect to Anvil"
 

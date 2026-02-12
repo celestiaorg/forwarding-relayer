@@ -26,9 +26,9 @@ When tokens (utia) are sent to a forwarding address on Celestia, the relayer det
 
 ## Guides
 
-- **[Running the E2E Test](docs/running-e2e-tests.md)** -- Start all services, forward tokens, and verify the result in one command
-- **[Deploying a New Warp Route](docs/deploying-new-warp-route.md)** -- Deploy Hyperlane contracts and set up a new token bridge between Celestia and an EVM chain
-- **[Forwarding Tokens for Existing Warp Routes](docs/forwarding-existing-warp-routes.md)** -- Use the relayer to bridge tokens through an already-deployed warp route
+- **[Running the E2E Test](docs/running-e2e-tests.md)**: Start all services, forward tokens, and verify the result in one command
+- **[Deploying a New Warp Route](docs/deploying-new-warp-route.md)**: Deploy Hyperlane contracts and set up a new token bridge between Celestia and an EVM chain
+- **[Forwarding Tokens for Existing Warp Routes](docs/forwarding-existing-warp-routes.md)**: Use the relayer to bridge tokens through an already-deployed warp route
 
 ## Quick Start
 

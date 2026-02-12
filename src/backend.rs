@@ -343,7 +343,7 @@ impl Backend {
             )
             .with_state(self.state);
 
-        let addr = format!("127.0.0.1:{}", self.port);
+        let addr = format!("0.0.0.0:{}", self.port);
         info!("Backend listening on {}", addr);
 
         let listener = tokio::net::TcpListener::bind(&addr).await?;

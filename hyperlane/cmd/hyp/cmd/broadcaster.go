@@ -191,7 +191,7 @@ func (b *Broadcaster) parseTxResponse(res *coretypes.ResultTx) *sdk.TxResponse {
 
 func (b *Broadcaster) refreshSequence(ctx context.Context) error {
 	// Query account info via ABCI query
-	path := fmt.Sprintf("/cosmos.auth.v1beta1.Query/Account")
+	path := "/cosmos.auth.v1beta1.Query/Account"
 
 	// Create the query request
 	queryReq := &authtypes.QueryAccountRequest{

@@ -211,8 +211,7 @@ Example using the docker compose network in this repository:
 4. Select `No` for the trusted relayer ism.
 5. Select `Native` from the token list.
 
-Deploy the Warp contract using the `hyperlane` CLI. Provide the flag `--symbol ETH` to refer to the file created under `deployments/ETH` from the initial step. Alternatively provide 
-Note, if running the CLI locally against the docker network then you will need to adjust the `rpcUrl` in `registry/chains` to use localhost.
+Deploy the Warp contract using the `hyperlane` CLI. Use `--symbol ETH` to refer to the file created under `deployments/ETH` from the initial step. If running the CLI locally against the docker network, set `rpcUrl` in `registry/chains` to localhost.
 ```
 hyperlane warp deploy --registry ./hyperlane/registry --warp  --symbol ETH
 ```
@@ -237,7 +236,7 @@ celestia-appd q warp tokens
 
 #### Set the remote routers to establish a link between both tokens
 
-Finally we will set the remote router for both new tokens. Firstly on the EVM side and then on Celestia, the order in which this is done is does not matter.
+Finally we will set the remote router for both new tokens. First on the EVM side, then on Celestia; the order does not matter.
 
 Using `cast` we can invoke the contract directly to enroll the remote router providing both the `domain` and `Synthetic` token identifier.
 ```

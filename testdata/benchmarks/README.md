@@ -7,7 +7,7 @@ Please refer to the `README.md` files in under [sp1/ev-exec](../../crates/sp1/ev
 
 ### Collecting proof input data
 
-The docker compose network can be used in order to collect proof input data. 
+The docker compose network can be used to collect proof input data. 
 Note, each document in this repository assumes that commands are run from the root of the repository.
 
 Launch the docker compose services:
@@ -23,7 +23,7 @@ make stop
 ```
 
 Collect proof input data for a range of blocks.
-As mentioned in the `ev-exec` documentation, using the `--start` and `--blocks` flags allows the user to chose a starting height and number of blocks to gather input data for.
+The `ev-exec` docs describe the `--start` and `--blocks` flags for choosing a starting height and number of blocks to gather input data.
 
 ```shell
 cargo run -p ev-exec-script --bin data-gen --release -- --start 15 --blocks 5
@@ -48,7 +48,7 @@ RUST_LOG=info cargo run -p ev-exec-script --release -- --execute --height 16 --o
 
 ### Benchmarking the block range/aggregation program
 
-In order to run the block range/aggregation program `ev-range-exec`, we must use real proofs. We can generate real proofs using the SP1 prover network by invoking the same commands as we did above, passing the `--prove` flag in place of `--execute`.
+To run the block range/aggregation program `ev-range-exec`, you need real proofs. We can generate real proofs using the SP1 prover network by invoking the same commands as we did above, passing the `--prove` flag in place of `--execute`.
 
 Running the block execution program in `--prove` mode will write the proof output containing both the SP1 compressed proof and public values to the `testdata/proofs` directory.
 

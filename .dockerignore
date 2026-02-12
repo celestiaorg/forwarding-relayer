@@ -1,0 +1,30 @@
+# Git
+.git/
+.gitignore
+
+# Build artifacts
+target/
+storage/
+
+# Documentation
+docs/
+*.md
+README.md
+
+# Test data
+testdata/
+
+# Testnet
+testnet/
+
+# Docker
+docker-compose.yml
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+.env.*

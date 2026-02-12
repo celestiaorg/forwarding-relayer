@@ -13,8 +13,8 @@ This guide covers how to deploy a new Hyperlane warp route between Celestia and 
 ## Overview
 
 A warp route consists of:
-- **Collateral token on Celestia** -- native utia locked by the forwarding module
-- **Synthetic token on EVM** -- an ERC20 (e.g., wTIA) minted on the destination chain
+- **Collateral token on Celestia**: native utia locked by the forwarding module
+- **Synthetic token on EVM**: an ERC20 (e.g., wTIA) minted on the destination chain
 
 The `hyperlane-init` container in docker-compose handles all of this automatically for the default Anvil setup. This guide explains how to customize or extend it for a new route.
 
@@ -47,9 +47,9 @@ rethlocal:                    # Chain name (must match Hyperlane registry)
 ```
 
 Key fields:
-- `type: synthetic` -- creates a mintable/burnable ERC20 on the EVM side
-- `owner` -- the address that can admin the token contract
-- `decimals` -- must match utia (6 decimals)
+- `type: synthetic`: creates a mintable/burnable ERC20 on the EVM side
+- `owner`: the address that can admin the token contract
+- `decimals`: must match utia (6 decimals)
 
 ## Step 3: Deploy Hyperlane Core Contracts
 
@@ -122,7 +122,7 @@ hyp enroll-remote-router http://celestia-validator:26657 $CEL_TOKEN 1234 0x00000
 
 ## Step 7: Update Relayer Config
 
-The Hyperlane relayer needs the correct contract addresses. Update [hyperlane/relayer-config.json](../hyperlane/relayer-config.json) with the deployed addresses for both chains. The `docker-entrypoint.sh` script does this automatically for the default setup -- see it as a reference for the fields to update.
+The Hyperlane relayer needs the correct contract addresses. Update [hyperlane/relayer-config.json](../hyperlane/relayer-config.json) with the deployed addresses for both chains. The `docker-entrypoint.sh` script does this automatically for the default setup; see it as a reference for the fields to update.
 
 After updating, restart the relayer:
 

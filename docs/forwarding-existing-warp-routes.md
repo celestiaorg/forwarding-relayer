@@ -6,7 +6,7 @@ This guide covers how to use the forwarding relayer to bridge tokens from Celest
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) (`cast` CLI) -- for querying EVM balances
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) (`cast` CLI) for querying EVM balances
 - Running environment: Celestia validator, Anvil (or your EVM chain), and Hyperlane relayer
 - Hyperlane contracts deployed on both chains (see [Deploying a New Warp Route](deploying-new-warp-route.md) if needed)
 
@@ -62,7 +62,7 @@ Or with the relayer binary for a custom recipient:
 
 The `dest-recipient` must be a 32-byte hex-encoded address (pad a 20-byte EVM address with 12 leading zero bytes).
 
-Save the output address -- you'll need it in the next steps.
+Save the output address; you'll need it in the next steps.
 
 ## Step 4: Start the Backend
 
@@ -171,7 +171,7 @@ The balance should reflect the forwarded amount (minus any IGP fees).
 
 ## Forwarding Multiple Transfers
 
-You can send tokens to the same forwarding address multiple times. Each deposit triggers a new `MsgForward` transaction. The relayer uses a balance cache to detect changes -- when the balance at a forwarding address increases, it forwards the new amount.
+You can send tokens to the same forwarding address multiple times. Each deposit triggers a new `MsgForward` transaction. The relayer uses a balance cache to detect changes: when the balance at a forwarding address increases, it forwards the new amount.
 
 ## Forwarding to Different Recipients
 
