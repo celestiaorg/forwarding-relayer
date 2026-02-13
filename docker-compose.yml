@@ -68,7 +68,11 @@ services:
     ports:
       - "8545:8545" # rpc
     healthcheck:
-      test: ["CMD-SHELL", "cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1"]
+      test:
+        [
+          "CMD-SHELL",
+          "cast block-number --rpc-url http://localhost:8545 > /dev/null 2>&1",
+        ]
       interval: 5s
       timeout: 3s
       start_period: 2s
@@ -116,7 +120,8 @@ services:
     networks:
       - celestia-zkevm-net
     healthcheck:
-      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      test:
+        ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/8080' || exit 1"]
       interval: 5s
       timeout: 3s
       start_period: 5s
@@ -128,7 +133,7 @@ services:
       - CELESTIA_RPC=http://celestia-validator:26657
       - CELESTIA_GRPC=http://celestia-validator:9090
       - BACKEND_URL=http://forwarding-backend:8080
-      - RELAYER_MNEMONIC=veteran capital explain keep focus nuclear police casino exercise pitch hover job sleep slam wasp honey tenant breeze hold hat quality upper multiply gossip
+      - PRIVATE_KEY_HEX=6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c
       - CHAIN_ID=celestia-zkevm-testnet
       - POLL_INTERVAL=6
       - IGP_FEE_BUFFER=1.1

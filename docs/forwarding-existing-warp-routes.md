@@ -102,11 +102,11 @@ The relayer needs gas to submit `MsgForward` transactions on Celestia:
 
 ```bash
 docker exec celestia-validator celestia-appd tx bank send \
-  default celestia1ehy4f4a0y6zue7xvdr0zuvsawplh7tkh0xlws3 10000000utia \
+  default celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q 10000000utia \
   --fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
 ```
 
-The relayer address `celestia1ehy4f4a0y6zue7xvdr0zuvsawplh7tkh0xlws3` is derived from the default test mnemonic. If you use a custom mnemonic, derive its address and fund that instead.
+The relayer address `celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q` corresponds to the default test private key hex. If you use a custom key, derive and fund that address instead.
 
 ## Step 7: Start the Forwarding Relayer
 
@@ -115,7 +115,7 @@ RUST_LOG=info ./target/release/forwarding-relayer relayer \
   --celestia-rpc http://localhost:26657 \
   --celestia-grpc http://localhost:9090 \
   --backend-url http://localhost:8080 \
-  --relayer-mnemonic "veteran capital explain keep focus nuclear police casino exercise pitch hover job sleep slam wasp honey tenant breeze hold hat quality upper multiply gossip"
+  --private-key-hex "6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c"
 ```
 
 Leave this running. It polls the backend for forwarding requests and watches for balance changes every 6 seconds.
@@ -127,7 +127,7 @@ Leave this running. It polls the backend for forwarding requests and watches for
 | `--celestia-rpc` | `CELESTIA_RPC` | `http://localhost:26657` | Tendermint RPC URL |
 | `--celestia-grpc` | `CELESTIA_GRPC` | `http://localhost:9090` | Cosmos SDK gRPC URL |
 | `--backend-url` | `BACKEND_URL` | `http://localhost:8080` | Backend API URL |
-| `--relayer-mnemonic` | `RELAYER_MNEMONIC` | (required) | BIP39 mnemonic for signing |
+| `--private-key-hex` | `PRIVATE_KEY_HEX` | (required) | secp256k1 private key hex for signing |
 | `--chain-id` | `CHAIN_ID` | `celestia-zkevm-testnet` | Celestia chain ID |
 | `--poll-interval` | `POLL_INTERVAL` | `6` | Seconds between poll cycles |
 | `--igp-fee-buffer` | `IGP_FEE_BUFFER` | `1.1` | Multiplier on quoted IGP fee |

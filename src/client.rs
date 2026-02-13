@@ -107,14 +107,13 @@ impl CelestiaClient {
         rpc_url: String,
         tendermint_rpc_url: String,
         grpc_url: String,
-        mnemonic: String,
+        private_key_hex: String,
         chain_id: String,
     ) -> Result<Self> {
-        // Derive signing key from mnemonic using BIP44 derivation path for Cosmos
-        // m/44'/118'/0'/0/0
-        let seed = bip39::Mnemonic::parse(&mnemonic)?.to_seed("");
-        let path = "m/44'/118'/0'/0/0".parse()?;
-        let signing_key = SigningKey::derive_from_path(seed, &path)?;
+        let private_key_hex = private_key_hex.trim().trim_start_matches("0x");
+        let private_key = hex::decode(private_key_hex).context("Invalid private key hex")?;
+        let signing_key = SigningKey::from_slice(&private_key)
+            .map_err(|e| anyhow::anyhow!("Invalid secp256k1 private key: {}", e))?;
         let signer_address = signing_key
             .public_key()
             .account_id("celestia")
@@ -220,8 +219,8 @@ impl CelestiaClient {
         }
 
         // Decode the response
-        let fee_response: QuoteFeeResponse = Message::decode(response.value.as_slice())
-            .context("Failed to decode fee response")?;
+        let fee_response: QuoteFeeResponse =
+            Message::decode(response.value.as_slice()).context("Failed to decode fee response")?;
 
         Ok(fee_response
             .fee

@@ -36,11 +36,20 @@ start:
 	@docker compose up --detach
 .PHONY: start
 
-## stop: Stop all Docker containers and remove volumes.
+## stop: Stop all Docker containers, remove volumes, and clean cached deployment files.
 stop:
 	@echo "--> Stopping all Docker containers"
 	@docker compose down -v
+	@echo "--> Removing cached Hyperlane deployment files"
+	@rm -f hyperlane/hyperlane-cosmosnative.json
+	@rm -rf hyperlane/registry/chains/rethlocal/addresses.yaml hyperlane/registry/deployments/warp_routes/TIA/
+	@git restore hyperlane/relayer-config.json 2>/dev/null || true
+	@echo "Full cleanup complete"
 .PHONY: stop
+
+## clean: Alias for stop (remove cached Hyperlane deployment files).
+clean: stop
+.PHONY: clean
 
 ## transfer: Transfer tokens from Celestia to Anvil via Hyperlane.
 transfer:
