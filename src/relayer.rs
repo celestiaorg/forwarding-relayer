@@ -145,7 +145,7 @@ impl Relayer {
             CelestiaClient::new(config.celestia_grpc.clone(), config.private_key_hex.clone())
                 .await?;
 
-        info!("Relayer address: {}", celestia.signer_address);
+        info!("Relayer address: {}", celestia.signer_address());
 
         // Open balance cache database
         let balance_cache = BalanceCacheStorage::new(&config.balance_cache_path)?;

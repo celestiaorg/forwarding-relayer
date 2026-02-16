@@ -13,6 +13,7 @@ use crate::proto::celestia::forwarding::v1::{
 use crate::proto::cosmos::base::v1beta1::Coin;
 use crate::Balance;
 
+/// Implements the Name trait for Protobuf message type URLs.
 impl prost::Name for MsgForward {
     const NAME: &'static str = "MsgForward";
     const PACKAGE: &'static str = "celestia.forwarding.v1";
@@ -22,26 +23,20 @@ impl prost::Name for MsgForward {
 pub(crate) struct CelestiaClient {
     channel: Channel,
     tx_client: GrpcClient,
-    pub(crate) signer_address: AccountId,
+    signer_address: AccountId,
 }
 
 impl CelestiaClient {
+    /// Creates and returns a new CelestiaClient using the provided private key.
     pub(crate) async fn new(grpc_url: String, private_key_hex: String) -> Result<Self> {
-        let private_key_hex = private_key_hex.trim().trim_start_matches("0x").to_string();
-        let private_key = hex::decode(&private_key_hex).context("Invalid private key hex")?;
-        let signing_key = SigningKey::from_slice(&private_key)
-            .map_err(|e| anyhow::anyhow!("Invalid secp256k1 private key: {}", e))?;
-        let signer_address = signing_key
-            .public_key()
-            .account_id("celestia")
-            .map_err(|e| anyhow::anyhow!("Failed to get account ID: {}", e))?;
-
+        let (private_key_hex, signer_address) = Self::prepare_private_key(&private_key_hex)?;
         let endpoint = Endpoint::from_shared(grpc_url.clone()).with_context(|| {
             format!(
                 "Invalid CELESTIA_GRPC URL (expected http/https): {}",
                 grpc_url
             )
         })?;
+
         let channel = endpoint.connect_lazy();
 
         let tx_client = GrpcClient::builder()
@@ -55,6 +50,22 @@ impl CelestiaClient {
             tx_client,
             signer_address,
         })
+    }
+
+    /// Parses the private key and returns the normalized string (without 0x prefix)
+    /// and the associated bech32 account address.
+    fn prepare_private_key(private_key_hex: &str) -> Result<(String, AccountId)> {
+        let normalized_private_key_hex = private_key_hex.trim().trim_start_matches("0x");
+        let private_key =
+            hex::decode(normalized_private_key_hex).context("Invalid private key hex")?;
+        let signing_key = SigningKey::from_slice(&private_key)
+            .map_err(|e| anyhow::anyhow!("Invalid secp256k1 private key: {}", e))?;
+        let signer_address = signing_key
+            .public_key()
+            .account_id("celestia")
+            .map_err(|e| anyhow::anyhow!("Failed to get account ID: {}", e))?;
+
+        Ok((normalized_private_key_hex.to_string(), signer_address))
     }
 
     /// Query all balances for an address via Cosmos bank gRPC query
@@ -102,6 +113,11 @@ impl CelestiaClient {
                 Ok("0".to_string())
             }
         }
+    }
+
+    /// Returns the configured signer address.
+    pub(crate) fn signer_address(&self) -> &AccountId {
+        &self.signer_address
     }
 
     /// Submit a forwarding transaction
