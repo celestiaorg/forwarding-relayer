@@ -8,24 +8,10 @@ use tonic::transport::{Channel, Endpoint};
 use tracing::{info, warn};
 
 use crate::proto::celestia::forwarding::v1::{
-    query_client::QueryClient as ForwardingQueryClient, QueryQuoteForwardingFeeRequest,
+    query_client::QueryClient as ForwardingQueryClient, MsgForward, QueryQuoteForwardingFeeRequest,
 };
+use crate::proto::cosmos::base::v1beta1::Coin;
 use crate::Balance;
-
-/// MsgForward protobuf message for celestia.forwarding.v1
-#[derive(Clone, PartialEq, prost::Message)]
-pub(crate) struct MsgForward {
-    #[prost(string, tag = "1")]
-    pub signer: String,
-    #[prost(string, tag = "2")]
-    pub forward_addr: String,
-    #[prost(uint32, tag = "3")]
-    pub dest_domain: u32,
-    #[prost(string, tag = "4")]
-    pub dest_recipient: String,
-    #[prost(message, required, tag = "5")]
-    pub max_igp_fee: celestia_proto::cosmos::base::v1beta1::Coin,
-}
 
 impl prost::Name for MsgForward {
     const NAME: &'static str = "MsgForward";
@@ -146,10 +132,10 @@ impl CelestiaClient {
             forward_addr: forward_addr.to_string(),
             dest_domain,
             dest_recipient: dest_recipient.to_string(),
-            max_igp_fee: celestia_proto::cosmos::base::v1beta1::Coin {
+            max_igp_fee: Some(Coin {
                 denom: fee_denom.to_string(),
                 amount: fee_amount.to_string(),
-            },
+            }),
         };
 
         let tx_info = self
