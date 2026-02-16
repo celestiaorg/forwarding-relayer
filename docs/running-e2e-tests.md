@@ -6,7 +6,7 @@ This guide walks you through running the automated end-to-end test, which starts
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- `celestia-app-standalone:local` Docker image (built from [celestia-app](https://github.com/celestiaorg/celestia-app))
+- `ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0` Docker image
 
 ## Quick Start
 
@@ -47,7 +47,6 @@ All defaults work out of the box. If you need to customize:
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
 | `--anvil-rpc` | | `http://localhost:8545` | Anvil RPC URL |
-| `--celestia-rpc` | | `http://localhost:26657` | Celestia Tendermint RPC URL |
 | `--warp-token` | `WARP_TOKEN` | Auto-detected | wTIA token address on Anvil |
 | `--recipient` | | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | Recipient on Anvil |
 | `--backend-port` | | `8080` | Backend API port |
@@ -82,7 +81,7 @@ docker logs hyperlane-init
 
 Common causes:
 - Celestia validator hasn't started producing blocks yet (wait longer)
-- The `celestia-app-standalone:local` image is missing or outdated
+- The `ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0` image is missing or outdated
 
 ### E2E test times out waiting for balance change
 

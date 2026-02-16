@@ -1,6 +1,6 @@
 services:
   celestia-init:
-    image: celestia-app-standalone:local
+    image: ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0
     container_name: celestia-init
     entrypoint: /scripts/init.sh
     volumes:
@@ -9,7 +9,7 @@ services:
     restart: "no"
 
   celestia-validator:
-    image: celestia-app-standalone:local
+    image: ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0
     container_name: celestia-validator
     ports:
       - "26656:26656"
@@ -130,11 +130,9 @@ services:
     image: forwarding-relayer:local
     container_name: forwarding-relayer
     environment:
-      - CELESTIA_RPC=http://celestia-validator:26657
       - CELESTIA_GRPC=http://celestia-validator:9090
       - BACKEND_URL=http://forwarding-backend:8080
       - PRIVATE_KEY_HEX=6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c
-      - CHAIN_ID=celestia-zkevm-testnet
       - POLL_INTERVAL=6
       - IGP_FEE_BUFFER=1.1
       - BALANCE_CACHE_PATH=/app/storage/balance_cache.db

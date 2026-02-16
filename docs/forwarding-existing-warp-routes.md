@@ -112,7 +112,6 @@ The relayer address `celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q` correspond
 
 ```bash
 RUST_LOG=info ./target/release/forwarding-relayer relayer \
-  --celestia-rpc http://localhost:26657 \
   --celestia-grpc http://localhost:9090 \
   --backend-url http://localhost:8080 \
   --private-key-hex "6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c"
@@ -124,11 +123,9 @@ Leave this running. It polls the backend for forwarding requests and watches for
 
 | Flag | Env Var | Default | Description |
 |------|---------|---------|-------------|
-| `--celestia-rpc` | `CELESTIA_RPC` | `http://localhost:26657` | Tendermint RPC URL |
 | `--celestia-grpc` | `CELESTIA_GRPC` | `http://localhost:9090` | Cosmos SDK gRPC URL |
 | `--backend-url` | `BACKEND_URL` | `http://localhost:8080` | Backend API URL |
 | `--private-key-hex` | `PRIVATE_KEY_HEX` | (required) | secp256k1 private key hex for signing |
-| `--chain-id` | `CHAIN_ID` | `celestia-zkevm-testnet` | Celestia chain ID |
 | `--poll-interval` | `POLL_INTERVAL` | `6` | Seconds between poll cycles |
 | `--igp-fee-buffer` | `IGP_FEE_BUFFER` | `1.1` | Multiplier on quoted IGP fee |
 | `--balance-cache-path` | `BALANCE_CACHE_PATH` | `storage/balance_cache.db` | SQLite cache path |

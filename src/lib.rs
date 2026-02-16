@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 mod backend;
 mod client;
+mod proto;
 mod relayer;
 
 // Re-export public types from modules
@@ -98,8 +99,8 @@ pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
     use cosmrs::bip32::{DerivationPath, XPrv};
 
     // Parse the mnemonic and convert to seed
-    let mnemonic_parsed = bip39::Mnemonic::parse(mnemonic)
-        .map_err(|e| anyhow::anyhow!("Invalid mnemonic: {}", e))?;
+    let mnemonic_parsed =
+        bip39::Mnemonic::parse(mnemonic).map_err(|e| anyhow::anyhow!("Invalid mnemonic: {}", e))?;
     let seed = mnemonic_parsed.to_seed("");
 
     // Standard Cosmos HD path: m/44'/118'/0'/0/0

@@ -59,7 +59,7 @@ SUCCESS! 1000000 utia forwarded from Celestia to Anvil as wTIA
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- `celestia-app-standalone:local` Docker image (built from [celestia-app](https://github.com/celestiaorg/celestia-app))
+- `ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0` Docker image
 
 ## Manual Step-by-Step
 
@@ -108,7 +108,7 @@ curl -X POST http://localhost:8080/forwarding-requests \
 
 ```bash
 RUST_LOG=info ./target/release/forwarding-relayer relayer \
-  --celestia-rpc http://localhost:26657 \
+  --celestia-grpc http://localhost:9090 \
   --backend-url http://localhost:8080 \
   --private-key-hex "6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c"
 ```

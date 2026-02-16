@@ -14,10 +14,6 @@ use crate::{Balance, ForwardingRequest, StatusUpdate};
 /// Relayer configuration
 #[derive(Parser, Debug)]
 pub struct RelayerConfig {
-    /// Celestia Tendermint RPC URL (port 26657)
-    #[arg(long, env = "CELESTIA_RPC", default_value = "http://localhost:26657")]
-    pub celestia_rpc: String,
-
     /// Celestia gRPC URL (port 9090)
     #[arg(long, env = "CELESTIA_GRPC", default_value = "http://localhost:9090")]
     pub celestia_grpc: String,
@@ -29,10 +25,6 @@ pub struct RelayerConfig {
     /// Relayer secp256k1 private key hex (for signing transactions)
     #[arg(long, env = "PRIVATE_KEY_HEX")]
     pub private_key_hex: String,
-
-    /// Celestia chain ID
-    #[arg(long, env = "CHAIN_ID", default_value = "celestia-zkevm-testnet")]
-    pub chain_id: String,
 
     /// Poll interval in seconds
     #[arg(long, env = "POLL_INTERVAL", default_value = "6")]
@@ -149,16 +141,9 @@ pub struct Relayer {
 
 impl Relayer {
     pub async fn new(config: RelayerConfig) -> Result<Self> {
-        // CELESTIA_RPC is now the Tendermint RPC URL (port 26657)
-        // All queries use ABCI queries via Tendermint RPC
-        let celestia = CelestiaClient::new(
-            config.celestia_rpc.clone(), // kept for compatibility, not used
-            config.celestia_rpc.clone(), // Tendermint RPC URL
-            config.celestia_grpc.clone(),
-            config.private_key_hex.clone(),
-            config.chain_id.clone(),
-        )
-        .await?;
+        let celestia =
+            CelestiaClient::new(config.celestia_grpc.clone(), config.private_key_hex.clone())
+                .await?;
 
         info!("Relayer address: {}", celestia.signer_address);
 
@@ -244,7 +229,7 @@ impl Relayer {
     /// Main relayer loop
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting forwarding relayer");
-        info!("Celestia RPC: {}", self.config.celestia_rpc);
+        info!("Celestia gRPC: {}", self.config.celestia_grpc);
         info!("Backend URL: {}", self.config.backend_url);
         info!("Poll interval: {}s", self.config.poll_interval);
 

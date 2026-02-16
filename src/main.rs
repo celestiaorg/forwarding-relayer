@@ -31,7 +31,8 @@ async fn main() -> Result<()> {
             dest_recipient,
         } => {
             // Derive forwarding address
-            let address = forwarding_relayer::derive_forwarding_address(dest_domain, &dest_recipient)?;
+            let address =
+                forwarding_relayer::derive_forwarding_address(dest_domain, &dest_recipient)?;
             println!("{}", address);
             Ok(())
         }
