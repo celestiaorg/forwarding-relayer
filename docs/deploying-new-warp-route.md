@@ -7,7 +7,7 @@ This guide covers how to deploy a new Hyperlane warp route between Celestia and 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) (`cast` CLI)
-- `celestia-app-standalone:local` Docker image
+- `ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0` Docker image
 - [Hyperlane CLI](https://docs.hyperlane.xyz/docs/reference/cli) (`hyperlane` command)
 
 ## Overview

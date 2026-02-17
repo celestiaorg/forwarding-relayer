@@ -10,11 +10,9 @@ case "$MODE" in
   relayer)
     echo "Starting forwarding relayer..."
     exec forwarding-relayer relayer \
-      --celestia-rpc "${CELESTIA_RPC:-http://celestia-validator:26657}" \
       --celestia-grpc "${CELESTIA_GRPC:-http://celestia-validator:9090}" \
       --backend-url "${BACKEND_URL:-http://forwarding-backend:8080}" \
       --private-key-hex "${PRIVATE_KEY_HEX:?PRIVATE_KEY_HEX is required}" \
-      --chain-id "${CHAIN_ID:-celestia-zkevm-testnet}" \
       --poll-interval "${POLL_INTERVAL:-6}" \
       --igp-fee-buffer "${IGP_FEE_BUFFER:-1.1}" \
       --balance-cache-path "${BALANCE_CACHE_PATH:-/app/storage/balance_cache.db}"

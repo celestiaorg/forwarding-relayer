@@ -104,14 +104,6 @@ query-balance:
 	cast call $(WARP_TOKEN) "balanceOf(address)(uint256)" $$RECIPIENT --rpc-url http://localhost:8545
 .PHONY: query-anvil-balance
 
-## spamoor: Run spamoor transaction flooding against the EVM roll-up.
-spamoor:
-	@echo "--> Running spamoor transaction flooding daemon"
-	@echo "Spamoor will be available on localhost:8080"
-	@chmod +x scripts/run-spamoor.sh
-	@scripts/run-spamoor.sh $(ARGS)
-.PHONY: spamoor
-
 ## derive-address: Derive the forwarding address for Anvil (domain 1234).
 derive-address:
 	@echo "--> Deriving forwarding address for Anvil (domain 1234)"
