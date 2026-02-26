@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, patch},
@@ -12,7 +12,9 @@ use std::path::{Path as StdPath, PathBuf};
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
-use crate::{CreateForwardingRequest, ForwardingRequest, StatusUpdate};
+use serde::Deserialize;
+
+use crate::{derive_forwarding_address, CreateForwardingRequest, ForwardingRequest, StatusUpdate};
 
 /// Backend configuration
 #[derive(Parser, Debug)]
@@ -333,6 +335,7 @@ impl Backend {
     /// Start the backend server
     pub async fn serve(self) -> Result<()> {
         let app = Router::new()
+            .route("/forwarding-address", get(get_forwarding_address))
             .route(
                 "/forwarding-requests",
                 get(list_requests).post(create_request),
@@ -350,6 +353,30 @@ impl Backend {
         axum::serve(listener, app).await?;
 
         Ok(())
+    }
+}
+
+/// Query params for GET /forwarding-address
+#[derive(Deserialize)]
+struct ForwardingAddressQuery {
+    dest_domain: u32,
+    dest_recipient: String,
+}
+
+/// GET /forwarding-address?dest_domain=<u32>&dest_recipient=<hex> - Derive forwarding address
+async fn get_forwarding_address(
+    Query(params): Query<ForwardingAddressQuery>,
+) -> impl IntoResponse {
+    match derive_forwarding_address(params.dest_domain, &params.dest_recipient) {
+        Ok(address) => (StatusCode::OK, Json(serde_json::json!({ "address": address }))).into_response(),
+        Err(e) => {
+            error!("Failed to derive forwarding address: {:#}", e);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response()
+        }
     }
 }
 
