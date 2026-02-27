@@ -1,10 +1,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use reqwest::Client as HttpClient;
-use rusqlite::{params, Connection};
 use std::collections::HashMap;
-use std::path::{Path as StdPath, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -33,101 +30,6 @@ pub struct RelayerConfig {
     /// IGP fee buffer multiplier (e.g., 1.1 for 10% buffer)
     #[arg(long, env = "IGP_FEE_BUFFER", default_value = "1.1")]
     pub igp_fee_buffer: f64,
-
-    /// Path to balance cache database file
-    #[arg(
-        long,
-        env = "BALANCE_CACHE_PATH",
-        default_value = "storage/balance_cache.db"
-    )]
-    pub balance_cache_path: PathBuf,
-}
-
-/// SQLite storage for balance cache (used by relayer)
-pub struct BalanceCacheStorage {
-    conn: Arc<Mutex<Connection>>,
-}
-
-impl BalanceCacheStorage {
-    /// Create or open balance cache database
-    pub fn new(db_path: &StdPath) -> Result<Self> {
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory {:?}", parent))?;
-        }
-
-        let conn = Connection::open(db_path)
-            .with_context(|| format!("Failed to open balance cache DB at {:?}", db_path))?;
-
-        // Create table if it doesn't exist
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS balance_cache (
-                address TEXT PRIMARY KEY,
-                balances TEXT NOT NULL
-            )",
-            [],
-        )
-        .context("Failed to create balance_cache table")?;
-
-        info!("Opened balance cache database at {:?}", db_path);
-
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-        })
-    }
-
-    /// Load all cached balances
-    pub fn load_all(&self) -> Result<HashMap<String, Vec<Balance>>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT address, balances FROM balance_cache")
-            .context("Failed to prepare SELECT statement")?;
-
-        let mut cache = HashMap::new();
-        let rows = stmt
-            .query_map([], |row| {
-                let address: String = row.get(0)?;
-                let balances_json: String = row.get(1)?;
-                Ok((address, balances_json))
-            })
-            .context("Failed to query balance cache")?;
-
-        for row in rows {
-            let (address, balances_json) = row.context("Failed to read row")?;
-            let balances: Vec<Balance> =
-                serde_json::from_str(&balances_json).context("Failed to deserialize balances")?;
-            cache.insert(address, balances);
-        }
-
-        Ok(cache)
-    }
-
-    /// Save balance for a specific address
-    pub fn save(&self, address: &str, balances: &[Balance]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        let balances_json =
-            serde_json::to_string(balances).context("Failed to serialize balances")?;
-
-        conn.execute(
-            "INSERT OR REPLACE INTO balance_cache (address, balances) VALUES (?1, ?2)",
-            params![address, balances_json],
-        )
-        .context("Failed to save balance to cache")?;
-
-        Ok(())
-    }
-
-    /// Remove balance cache for a specific address
-    pub fn remove(&self, address: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "DELETE FROM balance_cache WHERE address = ?1",
-            params![address],
-        )
-        .context("Failed to remove balance from cache")?;
-        Ok(())
-    }
 }
 
 /// Relayer state
@@ -135,7 +37,6 @@ pub struct Relayer {
     config: RelayerConfig,
     celestia: CelestiaClient,
     http_client: HttpClient,
-    balance_cache: BalanceCacheStorage,
     cached_balances: HashMap<String, Vec<Balance>>,
 }
 
@@ -147,20 +48,11 @@ impl Relayer {
 
         info!("Relayer address: {}", celestia.signer_address());
 
-        // Open balance cache database
-        let balance_cache = BalanceCacheStorage::new(&config.balance_cache_path)?;
-        let cached_balances = balance_cache.load_all()?;
-        info!(
-            "Loaded balance cache with {} addresses from database",
-            cached_balances.len()
-        );
-
         Ok(Self {
             config,
             celestia,
             http_client: HttpClient::new(),
-            balance_cache,
-            cached_balances,
+            cached_balances: HashMap::new(),
         })
     }
 
@@ -296,14 +188,6 @@ impl Relayer {
             return Ok(());
         }
 
-        if balances.is_empty() {
-            debug!("No balance at forwarding address {}", forward_addr);
-            self.cached_balances
-                .insert(forward_addr.clone(), balances.clone());
-            self.balance_cache.save(forward_addr, &balances)?;
-            return Ok(());
-        }
-
         info!("New deposit detected at {}! Balance changed:", forward_addr);
         for balance in &balances {
             info!("  {} {}", balance.amount, balance.denom);
@@ -321,10 +205,8 @@ impl Relayer {
         );
 
         // Update in-memory cache BEFORE submitting to prevent duplicate submissions within
-        // this session. We intentionally do NOT persist this to SQLite: if the relayer
-        // crashes before the tx is confirmed, the SQLite cache must not reflect the
-        // pre-tx balance, otherwise the balance will appear unchanged on restart and
-        // the forward will never be retried.
+        // this session. On restart the cache is empty, so a pending forward will always
+        // be retried regardless of whether it previously failed or was never submitted.
         self.cached_balances
             .insert(forward_addr.clone(), balances.clone());
 
@@ -352,7 +234,6 @@ impl Relayer {
 
                 // Clear balance cache for this address now that forwarding is complete
                 self.cached_balances.remove(forward_addr);
-                self.balance_cache.remove(forward_addr)?;
             }
             Err(e) => {
                 error!("Failed to submit forwarding for {}: {:#}", forward_addr, e);
