@@ -320,11 +320,13 @@ impl Relayer {
             request.dest_domain, quoted_fee, max_igp_fee, self.config.igp_fee_buffer
         );
 
-        // Update balance cache BEFORE submitting transaction to prevent duplicate submissions
-        // This ensures that even if the transaction is pending in mempool, we won't retry
+        // Update in-memory cache BEFORE submitting to prevent duplicate submissions within
+        // this session. We intentionally do NOT persist this to SQLite: if the relayer
+        // crashes before the tx is confirmed, the SQLite cache must not reflect the
+        // pre-tx balance, otherwise the balance will appear unchanged on restart and
+        // the forward will never be retried.
         self.cached_balances
             .insert(forward_addr.clone(), balances.clone());
-        self.balance_cache.save(forward_addr, &balances)?;
 
         // Submit forwarding transaction
         match self
