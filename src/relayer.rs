@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use reqwest::Client as HttpClient;
-use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::client::CelestiaClient;
-use crate::{Balance, ForwardingRequest, StatusUpdate};
+use crate::{ForwardingRequest, StatusUpdate};
 
 /// Relayer configuration
 #[derive(Parser, Debug)]
@@ -37,7 +36,6 @@ pub struct Relayer {
     config: RelayerConfig,
     celestia: CelestiaClient,
     http_client: HttpClient,
-    cached_balances: HashMap<String, Vec<Balance>>,
 }
 
 impl Relayer {
@@ -52,7 +50,6 @@ impl Relayer {
             config,
             celestia,
             http_client: HttpClient::new(),
-            cached_balances: HashMap::new(),
         })
     }
 
@@ -176,19 +173,12 @@ impl Relayer {
         // Query current balance
         let balances = self.celestia.query_balances(forward_addr).await?;
 
-        // Get cached balance for this address
-        let cached_balance = self.cached_balances.get(forward_addr);
-
-        // Check if balance has changed (gone up)
-        let balance_increased = !balances.is_empty()
-            && (cached_balance.is_none() || !balances_equal(cached_balance.unwrap(), &balances));
-
-        if !balance_increased {
-            debug!("No new deposits detected at {}", forward_addr);
+        if balances.is_empty() {
+            debug!("No balance at {}", forward_addr);
             return Ok(());
         }
 
-        info!("New deposit detected at {}! Balance changed:", forward_addr);
+        info!("Balance at {}:", forward_addr);
         for balance in &balances {
             info!("  {} {}", balance.amount, balance.denom);
         }
@@ -204,12 +194,6 @@ impl Relayer {
             request.dest_domain, quoted_fee, max_igp_fee, self.config.igp_fee_buffer
         );
 
-        // Update in-memory cache BEFORE submitting to prevent duplicate submissions within
-        // this session. On restart the cache is empty, so a pending forward will always
-        // be retried regardless of whether it previously failed or was never submitted.
-        self.cached_balances
-            .insert(forward_addr.clone(), balances.clone());
-
         // Submit forwarding transaction
         match self
             .celestia
@@ -224,20 +208,15 @@ impl Relayer {
             Ok(tx_hash) => {
                 info!("Forwarding successful: tx_hash={}", tx_hash);
 
-                // Transaction succeeded, update backend status to completed
                 if let Err(e) = self.update_request_status(&request.id, "completed").await {
                     warn!(
                         "Failed to update backend status for request {}: {:#}",
                         request.id, e
                     );
                 }
-
-                // Clear balance cache for this address now that forwarding is complete
-                self.cached_balances.remove(forward_addr);
             }
             Err(e) => {
                 error!("Failed to submit forwarding for {}: {:#}", forward_addr, e);
-                // Note: We keep the updated balance cache to prevent retrying the same transaction
             }
         }
 
@@ -245,23 +224,3 @@ impl Relayer {
     }
 }
 
-/// Check if two balance sets are equal
-pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-
-    let mut a_map: HashMap<&str, &str> = HashMap::new();
-    for balance in a {
-        a_map.insert(&balance.denom, &balance.amount);
-    }
-
-    for balance in b {
-        match a_map.get(balance.denom.as_str()) {
-            Some(&amount) if amount == balance.amount => {}
-            _ => return false,
-        }
-    }
-
-    true
-}
