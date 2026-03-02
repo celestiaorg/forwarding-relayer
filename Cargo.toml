@@ -29,3 +29,4 @@ tonic = "0.13"
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.38.0", features = ["bundled"] }

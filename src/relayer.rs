@@ -5,7 +5,19 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::client::CelestiaClient;
-use crate::{ForwardingRequest, StatusUpdate};
+use crate::{Balance, ForwardingRequest, StatusUpdate};
+
+/// Compare two balance lists for equality (order-independent).
+pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut a: Vec<_> = a.iter().map(|c| (&c.denom, &c.amount)).collect();
+    let mut b: Vec<_> = b.iter().map(|c| (&c.denom, &c.amount)).collect();
+    a.sort_by(|x, y| x.0.cmp(y.0));
+    b.sort_by(|x, y| x.0.cmp(y.0));
+    a == b
+}
 
 /// Relayer configuration
 #[derive(Parser, Debug)]
