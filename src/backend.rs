@@ -82,16 +82,16 @@ impl BackendStorage {
             let mut stmt = conn
                 .prepare("SELECT value FROM backend_metadata WHERE key = 'next_id'")
                 .context("Failed to prepare SELECT statement")?;
-            let result: Option<u64> = stmt
+            let result: Option<i64> = stmt
                 .query_row([], |row| row.get(0))
                 .optional()
                 .context("Failed to query next_id")?;
-            result.unwrap_or(1)
+            result.map(|v| v as u64).unwrap_or(1)
         };
 
         conn.execute(
             "INSERT OR REPLACE INTO backend_metadata (key, value) VALUES ('next_id', ?1)",
-            params![current + 1],
+            params![(current + 1) as i64],
         )
         .context("Failed to update next_id")?;
 
@@ -364,11 +364,13 @@ struct ForwardingAddressQuery {
 }
 
 /// GET /forwarding-address?dest_domain=<u32>&dest_recipient=<hex> - Derive forwarding address
-async fn get_forwarding_address(
-    Query(params): Query<ForwardingAddressQuery>,
-) -> impl IntoResponse {
+async fn get_forwarding_address(Query(params): Query<ForwardingAddressQuery>) -> impl IntoResponse {
     match derive_forwarding_address(params.dest_domain, &params.dest_recipient) {
-        Ok(address) => (StatusCode::OK, Json(serde_json::json!({ "address": address }))).into_response(),
+        Ok(address) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "address": address })),
+        )
+            .into_response(),
         Err(e) => {
             error!("Failed to derive forwarding address: {:#}", e);
             (

@@ -155,18 +155,14 @@ destRecipient = 0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f000
 ## Operational Flow
 
 ```text
-STARTUP:
-  requests = GET /forwarding-requests from Backend
-  balanceCache = {}
-
 MAIN LOOP (every ~6 seconds):
-  newRequests = GET /forwarding-requests from Backend
-  requests = merge(requests, newRequests)
+  requests = GET /forwarding-requests from Backend
+             (on failure: use empty list, retry next cycle)
 
-  for each request in requests:
+  for each pending request in requests:
     balance = query Celestia balance at request.forward_addr
 
-    if balance > 0 AND balance != balanceCache[request.forward_addr]:
+    if balance > 0:
       # Query current IGP fee and add buffer
       quoted_fee = query QuoteForwardingFee(request.dest_domain)
       max_fee = quoted_fee * 1.1  # 10% buffer for price changes
@@ -178,12 +174,10 @@ MAIN LOOP (every ~6 seconds):
         max_igp_fee = max_fee
       )
 
-      if all tokens forwarded:
-        PATCH /forwarding-requests/{forward_addr}/status = "completed"
+      if forwarding successful:
+        PATCH /forwarding-requests/{id}/status = "completed"
       else:
-        log partial failure, will retry next cycle
-
-      balanceCache[request.forward_addr] = query new balance
+        log failure, will retry next cycle
 
   sleep(6 seconds)
 ```
@@ -193,7 +187,7 @@ MAIN LOOP (every ~6 seconds):
 | Scenario | Funds Status | Relayer Action |
 |----------|--------------|----------------|
 | Relayer crashes | Safe at `forwardAddr` | Restart, re-sync from Backend |
-| Backend unavailable | Safe | Retry with backoff, use cached requests |
+| Backend unavailable | Safe | Retry next cycle with empty request list |
 | Tx fails (out of gas) | Unchanged | Retry with higher gas |
 | Partial forwarding | Remaining at `forwardAddr` | Auto-retry on next cycle |
 | No warp route for token | Stays at `forwardAddr` | Skip token, retry when route added |
@@ -328,7 +322,6 @@ celestia-appd query tx <txhash> --output json | jq '.events'
 - [ ] Backend API client
 - [ ] Celestia gRPC/RPC client (balance queries, tx submission)
 - [ ] Transaction signing and broadcasting
-- [ ] Balance change detection (avoid duplicate submissions)
 - [ ] IGP fee quoting via `QuoteForwardingFee` query
 - [ ] Fee buffer calculation (e.g., quoted_fee * 1.1)
 - [ ] Retry logic with exponential backoff
