@@ -14,7 +14,7 @@ case "$MODE" in
       --backend-url "${BACKEND_URL:-http://forwarding-backend:8080}" \
       --private-key-hex "${PRIVATE_KEY_HEX:?PRIVATE_KEY_HEX is required}" \
       --poll-interval "${POLL_INTERVAL:-6}" \
-      --igp-fee-buffer "${IGP_FEE_BUFFER:-1.1}" \
+      --igp-fee-buffer "${IGP_FEE_BUFFER:-1.1}"
     ;;
 
   backend)
