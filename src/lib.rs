@@ -48,27 +48,19 @@ pub enum Command {
 /// Forwarding request from backend API
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ForwardingRequest {
-    pub id: String,
     pub forward_addr: String,
     pub dest_domain: u32,
     pub dest_recipient: String,
-    pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
 }
 
-/// Request body for creating a new forwarding request (no ID - server generates it)
+/// Request body for creating a new forwarding request
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateForwardingRequest {
     pub forward_addr: String,
     pub dest_domain: u32,
     pub dest_recipient: String,
-}
-
-/// Status update request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct StatusUpdate {
-    pub status: String,
 }
 
 /// Token balance
