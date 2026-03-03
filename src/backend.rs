@@ -75,9 +75,46 @@ impl BackendStorage {
         })
     }
 
-    /// Increment and return the next ID
-    pub fn increment_next_id(&self) -> Result<u64> {
+    /// Create a new forwarding request, or return the existing pending one for the address.
+    /// Returns (request, true) if newly created, (request, false) if existing was returned.
+    pub fn create_request(
+        &self,
+        create_req: CreateForwardingRequest,
+    ) -> Result<(ForwardingRequest, bool)> {
         let conn = self.conn.lock().unwrap();
+
+        // Return existing pending request for this address if one exists (idempotent upsert)
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, forward_addr, dest_domain, dest_recipient, status, created_at \
+                 FROM forwarding_requests WHERE forward_addr = ?1 AND status = 'pending' LIMIT 1",
+            )
+            .context("Failed to prepare SELECT statement")?;
+
+        let existing = stmt
+            .query_row(params![&create_req.forward_addr], |row| {
+                Ok(ForwardingRequest {
+                    id: row.get(0)?,
+                    forward_addr: row.get(1)?,
+                    dest_domain: row.get(2)?,
+                    dest_recipient: row.get(3)?,
+                    status: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })
+            .optional()
+            .context("Failed to query existing pending request")?;
+
+        if let Some(existing) = existing {
+            info!(
+                "Returning existing pending request {} for address {}",
+                existing.id, existing.forward_addr
+            );
+            return Ok((existing, false));
+        }
+
+        // No existing pending request — create a new one.
+        // Inline the counter logic so the entire check+insert is under one lock.
         let current = {
             let mut stmt = conn
                 .prepare("SELECT value FROM backend_metadata WHERE key = 'next_id'")
@@ -95,14 +132,7 @@ impl BackendStorage {
         )
         .context("Failed to update next_id")?;
 
-        Ok(current)
-    }
-
-    /// Create a new forwarding request
-    pub fn create_request(&self, create_req: CreateForwardingRequest) -> Result<ForwardingRequest> {
-        let id_num = self.increment_next_id()?;
-        let id = format!("req-{:06}", id_num);
-
+        let id = format!("req-{:06}", current);
         let request = ForwardingRequest {
             id: id.clone(),
             forward_addr: create_req.forward_addr,
@@ -112,7 +142,6 @@ impl BackendStorage {
             created_at: Some(chrono::Utc::now().to_rfc3339()),
         };
 
-        let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO forwarding_requests (id, forward_addr, dest_domain, dest_recipient, status, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -128,7 +157,7 @@ impl BackendStorage {
         .context("Failed to insert forwarding request")?;
 
         info!("Created forwarding request: {}", id);
-        Ok(request)
+        Ok((request, true))
     }
 
     /// Add a forwarding request (for testing)
@@ -293,7 +322,10 @@ impl BackendState {
         self.storage.add_request(request)
     }
 
-    pub fn create_request(&self, create_req: CreateForwardingRequest) -> Result<ForwardingRequest> {
+    pub fn create_request(
+        &self,
+        create_req: CreateForwardingRequest,
+    ) -> Result<(ForwardingRequest, bool)> {
         self.storage.create_request(create_req)
     }
 
@@ -395,18 +427,20 @@ async fn list_requests(
     }
 }
 
-/// POST /forwarding-requests - Create a new forwarding request with auto-generated ID
+/// POST /forwarding-requests - Create a new forwarding request, or return the existing pending
+/// one for the address (idempotent). Returns 201 if newly created, 200 if existing was returned.
 async fn create_request(
     State(state): State<BackendState>,
     Json(create_req): Json<CreateForwardingRequest>,
 ) -> impl IntoResponse {
     match state.create_request(create_req) {
-        Ok(request) => {
-            info!(
-                "Created forwarding request {} for address {}",
-                request.id, request.forward_addr
-            );
-            (StatusCode::CREATED, Json(request)).into_response()
+        Ok((request, created)) => {
+            let status_code = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+            (status_code, Json(request)).into_response()
         }
         Err(e) => {
             error!("Failed to create forwarding request: {:#}", e);

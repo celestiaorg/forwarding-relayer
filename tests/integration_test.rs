@@ -165,7 +165,7 @@ async fn test_auto_generated_ids() {
     assert_eq!(created1.forward_addr, "celestia1test1");
     assert_eq!(created1.status, "pending");
 
-    // Create second request - should get next ID
+    // Create second request for the same address - should return the existing pending one
     let create_req2 = CreateForwardingRequest {
         forward_addr: "celestia1test1".to_string(), // Same address!
         dest_domain: 10,
@@ -180,11 +180,12 @@ async fn test_auto_generated_ids() {
         .await
         .unwrap();
 
-    let created2: ForwardingRequest = response2.json().await.unwrap();
-    assert_eq!(created2.id, "req-000002"); // Second auto-generated ID
-    assert_eq!(created2.forward_addr, "celestia1test1"); // Same address as first!
+    assert_eq!(response2.status(), 200); // 200 OK - returned existing, not 201 Created
+    let returned: ForwardingRequest = response2.json().await.unwrap();
+    assert_eq!(returned.id, "req-000001"); // Same ID as the first request
+    assert_eq!(returned.forward_addr, "celestia1test1");
 
-    // List all requests - should have both
+    // List all requests - should only have one
     let response = client
         .get(format!("{}/forwarding-requests", base_url))
         .send()
@@ -192,10 +193,6 @@ async fn test_auto_generated_ids() {
         .unwrap();
 
     let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].id, "req-000001");
-    assert_eq!(requests[1].id, "req-000002");
-
-    // Both have the same address but different IDs - no collision!
-    assert_eq!(requests[0].forward_addr, requests[1].forward_addr);
 }
