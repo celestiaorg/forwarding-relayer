@@ -117,10 +117,7 @@ async fn main() -> Result<()> {
     }
 
     let created: ForwardingRequest = resp.json().await?;
-    info!(
-        "Created forwarding request: {} for {}",
-        created.id, forward_addr
-    );
+    info!("Created forwarding request for {}", created.forward_addr);
 
     // === Step 4: Fund forwarding address ===
     info!("\n--- Step 4: Funding forwarding address ---");
