@@ -5,7 +5,7 @@ use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::client::CelestiaClient;
-use crate::{Balance, ForwardingRequest, StatusUpdate};
+use crate::{Balance, ForwardingRequest};
 
 /// Compare two balance lists for equality (order-independent).
 pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
@@ -92,36 +92,28 @@ impl Relayer {
         Ok(requests)
     }
 
-    /// Update forwarding request status in backend
-    async fn update_request_status(&self, request_id: &str, status: &str) -> Result<()> {
+    /// Notify backend that forwarding for an address completed (removes the pending request)
+    async fn complete_request(&self, forward_addr: &str) -> Result<()> {
         let url = format!(
-            "{}/forwarding-requests/{}/status",
-            self.config.backend_url, request_id
+            "{}/forwarding-requests/{}",
+            self.config.backend_url, forward_addr
         );
-
-        let update = StatusUpdate {
-            status: status.to_string(),
-        };
 
         let response = self
             .http_client
-            .patch(&url)
-            .json(&update)
+            .delete(&url)
             .send()
             .await
-            .with_context(|| format!("Failed to update status for request {}", request_id))?;
+            .with_context(|| format!("Failed to complete request for {}", forward_addr))?;
 
         if !response.status().is_success() {
             warn!(
-                "Failed to update backend status for request {}: {}",
-                request_id,
+                "Failed to remove backend request for {}: {}",
+                forward_addr,
                 response.status()
             );
         } else {
-            info!(
-                "Updated backend status for request {} to {}",
-                request_id, status
-            );
+            info!("Removed completed request for address {}", forward_addr);
         }
 
         Ok(())
@@ -161,10 +153,6 @@ impl Relayer {
 
         // Process each forwarding request
         for request in requests {
-            if request.status != "pending" {
-                continue;
-            }
-
             if let Err(e) = self.process_forwarding_request(&request).await {
                 error!(
                     "Error processing forwarding request for {}: {:#}",
@@ -220,10 +208,10 @@ impl Relayer {
             Ok(tx_hash) => {
                 info!("Forwarding successful: tx_hash={}", tx_hash);
 
-                if let Err(e) = self.update_request_status(&request.id, "completed").await {
+                if let Err(e) = self.complete_request(forward_addr).await {
                     warn!(
-                        "Failed to update backend status for request {}: {:#}",
-                        request.id, e
+                        "Failed to remove backend request for {}: {:#}",
+                        forward_addr, e
                     );
                 }
             }

@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, patch},
+    routing::{delete, get},
     Json, Router,
 };
 use clap::Parser;
@@ -14,7 +14,7 @@ use tracing::{error, info};
 
 use serde::Deserialize;
 
-use crate::{derive_forwarding_address, CreateForwardingRequest, ForwardingRequest, StatusUpdate};
+use crate::{derive_forwarding_address, CreateForwardingRequest, ForwardingRequest};
 
 /// Backend configuration
 #[derive(Parser, Debug)]
@@ -45,28 +45,17 @@ impl BackendStorage {
         let conn = Connection::open(db_path)
             .with_context(|| format!("Failed to open backend DB at {:?}", db_path))?;
 
-        // Create tables if they don't exist
+        // forward_addr is the natural primary key: at most one pending request per address
         conn.execute(
             "CREATE TABLE IF NOT EXISTS forwarding_requests (
-                id TEXT PRIMARY KEY,
-                forward_addr TEXT NOT NULL,
-                dest_domain INTEGER NOT NULL,
+                forward_addr   TEXT PRIMARY KEY,
+                dest_domain    INTEGER NOT NULL,
                 dest_recipient TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TEXT
+                created_at     TEXT
             )",
             [],
         )
         .context("Failed to create forwarding_requests table")?;
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS backend_metadata (
-                key TEXT PRIMARY KEY,
-                value INTEGER NOT NULL
-            )",
-            [],
-        )
-        .context("Failed to create backend_metadata table")?;
 
         info!("Opened backend database at {:?}", db_path);
 
@@ -75,74 +64,77 @@ impl BackendStorage {
         })
     }
 
-    /// Increment and return the next ID
-    pub fn increment_next_id(&self) -> Result<u64> {
+    /// Create a new forwarding request, or return the existing one for the address (idempotent).
+    /// Returns (request, true) if newly created, (request, false) if existing was returned.
+    pub fn create_request(
+        &self,
+        create_req: CreateForwardingRequest,
+    ) -> Result<(ForwardingRequest, bool)> {
         let conn = self.conn.lock().unwrap();
-        let current = {
-            let mut stmt = conn
-                .prepare("SELECT value FROM backend_metadata WHERE key = 'next_id'")
-                .context("Failed to prepare SELECT statement")?;
-            let result: Option<i64> = stmt
-                .query_row([], |row| row.get(0))
-                .optional()
-                .context("Failed to query next_id")?;
-            result.map(|v| v as u64).unwrap_or(1)
-        };
+
+        let created_at = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT OR REPLACE INTO backend_metadata (key, value) VALUES ('next_id', ?1)",
-            params![(current + 1) as i64],
-        )
-        .context("Failed to update next_id")?;
-
-        Ok(current)
-    }
-
-    /// Create a new forwarding request
-    pub fn create_request(&self, create_req: CreateForwardingRequest) -> Result<ForwardingRequest> {
-        let id_num = self.increment_next_id()?;
-        let id = format!("req-{:06}", id_num);
-
-        let request = ForwardingRequest {
-            id: id.clone(),
-            forward_addr: create_req.forward_addr,
-            dest_domain: create_req.dest_domain,
-            dest_recipient: create_req.dest_recipient,
-            status: "pending".to_string(),
-            created_at: Some(chrono::Utc::now().to_rfc3339()),
-        };
-
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO forwarding_requests (id, forward_addr, dest_domain, dest_recipient, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR IGNORE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
             params![
-                &request.id,
-                &request.forward_addr,
-                &request.dest_domain,
-                &request.dest_recipient,
-                &request.status,
-                &request.created_at
+                &create_req.forward_addr,
+                &create_req.dest_domain,
+                &create_req.dest_recipient,
+                &created_at
             ],
         )
         .context("Failed to insert forwarding request")?;
 
-        info!("Created forwarding request: {}", id);
-        Ok(request)
+        let inserted = conn.changes() > 0;
+
+        let request = if inserted {
+            info!("Created forwarding request for address {}", create_req.forward_addr);
+            ForwardingRequest {
+                forward_addr: create_req.forward_addr,
+                dest_domain: create_req.dest_domain,
+                dest_recipient: create_req.dest_recipient,
+                created_at: Some(created_at),
+            }
+        } else {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT forward_addr, dest_domain, dest_recipient, created_at
+                     FROM forwarding_requests WHERE forward_addr = ?1",
+                )
+                .context("Failed to prepare SELECT statement")?;
+
+            let existing = stmt
+                .query_row(params![&create_req.forward_addr], |row| {
+                    Ok(ForwardingRequest {
+                        forward_addr: row.get(0)?,
+                        dest_domain: row.get(1)?,
+                        dest_recipient: row.get(2)?,
+                        created_at: row.get(3)?,
+                    })
+                })
+                .context("Failed to query existing request")?;
+
+            info!(
+                "Returning existing pending request for address {}",
+                existing.forward_addr
+            );
+            existing
+        };
+
+        Ok((request, inserted))
     }
 
     /// Add a forwarding request (for testing)
     pub fn add_request(&self, request: ForwardingRequest) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO forwarding_requests (id, forward_addr, dest_domain, dest_recipient, status, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR REPLACE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
             params![
-                &request.id,
                 &request.forward_addr,
                 &request.dest_domain,
                 &request.dest_recipient,
-                &request.status,
                 &request.created_at
             ],
         )
@@ -155,18 +147,19 @@ impl BackendStorage {
     pub fn list_requests(&self) -> Result<Vec<ForwardingRequest>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, forward_addr, dest_domain, dest_recipient, status, created_at FROM forwarding_requests ORDER BY created_at")
+            .prepare(
+                "SELECT forward_addr, dest_domain, dest_recipient, created_at
+                 FROM forwarding_requests ORDER BY created_at",
+            )
             .context("Failed to prepare SELECT statement")?;
 
         let rows = stmt
             .query_map([], |row| {
                 Ok(ForwardingRequest {
-                    id: row.get(0)?,
-                    forward_addr: row.get(1)?,
-                    dest_domain: row.get(2)?,
-                    dest_recipient: row.get(3)?,
-                    status: row.get(4)?,
-                    created_at: row.get(5)?,
+                    forward_addr: row.get(0)?,
+                    dest_domain: row.get(1)?,
+                    dest_recipient: row.get(2)?,
+                    created_at: row.get(3)?,
                 })
             })
             .context("Failed to query forwarding requests")?;
@@ -179,93 +172,35 @@ impl BackendStorage {
         Ok(requests)
     }
 
-    /// Get a specific request by ID
-    pub fn get_request(&self, id: &str) -> Result<Option<ForwardingRequest>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT id, forward_addr, dest_domain, dest_recipient, status, created_at FROM forwarding_requests WHERE id = ?1")
-            .context("Failed to prepare SELECT statement")?;
-
-        let result = stmt
-            .query_row(params![id], |row| {
-                Ok(ForwardingRequest {
-                    id: row.get(0)?,
-                    forward_addr: row.get(1)?,
-                    dest_domain: row.get(2)?,
-                    dest_recipient: row.get(3)?,
-                    status: row.get(4)?,
-                    created_at: row.get(5)?,
-                })
-            })
-            .optional()
-            .context("Failed to query forwarding request")?;
-
-        Ok(result)
-    }
-
-    /// Update request status
-    pub fn update_status(&self, id: &str, status: &str) -> Result<Option<ForwardingRequest>> {
+    /// Remove a request by address (called when forwarding completes)
+    pub fn remove_by_addr(&self, forward_addr: &str) -> Result<Option<ForwardingRequest>> {
         let conn = self.conn.lock().unwrap();
 
-        // Check if request exists
         let mut stmt = conn
-            .prepare("SELECT id, forward_addr, dest_domain, dest_recipient, status, created_at FROM forwarding_requests WHERE id = ?1")
-            .context("Failed to prepare SELECT statement")?;
-
-        let request = stmt
-            .query_row(params![id], |row| {
-                Ok(ForwardingRequest {
-                    id: row.get(0)?,
-                    forward_addr: row.get(1)?,
-                    dest_domain: row.get(2)?,
-                    dest_recipient: row.get(3)?,
-                    status: row.get(4)?,
-                    created_at: row.get(5)?,
-                })
-            })
-            .optional()
-            .context("Failed to query forwarding request")?;
-
-        if let Some(mut req) = request {
-            conn.execute(
-                "UPDATE forwarding_requests SET status = ?1 WHERE id = ?2",
-                params![status, id],
+            .prepare(
+                "SELECT forward_addr, dest_domain, dest_recipient, created_at
+                 FROM forwarding_requests WHERE forward_addr = ?1",
             )
-            .context("Failed to update request status")?;
-
-            req.status = status.to_string();
-            Ok(Some(req))
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Remove a request (for completed requests)
-    pub fn remove_request(&self, id: &str) -> Result<Option<ForwardingRequest>> {
-        let conn = self.conn.lock().unwrap();
-
-        // Get the request before deleting
-        let mut stmt = conn
-            .prepare("SELECT id, forward_addr, dest_domain, dest_recipient, status, created_at FROM forwarding_requests WHERE id = ?1")
             .context("Failed to prepare SELECT statement")?;
 
         let request = stmt
-            .query_row(params![id], |row| {
+            .query_row(params![forward_addr], |row| {
                 Ok(ForwardingRequest {
-                    id: row.get(0)?,
-                    forward_addr: row.get(1)?,
-                    dest_domain: row.get(2)?,
-                    dest_recipient: row.get(3)?,
-                    status: row.get(4)?,
-                    created_at: row.get(5)?,
+                    forward_addr: row.get(0)?,
+                    dest_domain: row.get(1)?,
+                    dest_recipient: row.get(2)?,
+                    created_at: row.get(3)?,
                 })
             })
             .optional()
             .context("Failed to query forwarding request")?;
 
         if request.is_some() {
-            conn.execute("DELETE FROM forwarding_requests WHERE id = ?1", params![id])
-                .context("Failed to delete forwarding request")?;
+            conn.execute(
+                "DELETE FROM forwarding_requests WHERE forward_addr = ?1",
+                params![forward_addr],
+            )
+            .context("Failed to delete forwarding request")?;
         }
 
         Ok(request)
@@ -293,7 +228,10 @@ impl BackendState {
         self.storage.add_request(request)
     }
 
-    pub fn create_request(&self, create_req: CreateForwardingRequest) -> Result<ForwardingRequest> {
+    pub fn create_request(
+        &self,
+        create_req: CreateForwardingRequest,
+    ) -> Result<(ForwardingRequest, bool)> {
         self.storage.create_request(create_req)
     }
 
@@ -301,16 +239,8 @@ impl BackendState {
         self.storage.list_requests()
     }
 
-    pub fn get_request(&self, id: &str) -> Result<Option<ForwardingRequest>> {
-        self.storage.get_request(id)
-    }
-
-    pub fn update_status(&self, id: &str, status: &str) -> Result<Option<ForwardingRequest>> {
-        self.storage.update_status(id, status)
-    }
-
-    pub fn remove_request(&self, id: &str) -> Result<Option<ForwardingRequest>> {
-        self.storage.remove_request(id)
+    pub fn remove_by_addr(&self, forward_addr: &str) -> Result<Option<ForwardingRequest>> {
+        self.storage.remove_by_addr(forward_addr)
     }
 }
 
@@ -341,8 +271,8 @@ impl Backend {
                 get(list_requests).post(create_request),
             )
             .route(
-                "/forwarding-requests/:id/status",
-                patch(update_request_status),
+                "/forwarding-requests/:addr",
+                delete(complete_request),
             )
             .with_state(self.state);
 
@@ -395,121 +325,42 @@ async fn list_requests(
     }
 }
 
-/// POST /forwarding-requests - Create a new forwarding request with auto-generated ID
+/// POST /forwarding-requests - Create a new forwarding request, or return the existing one for
+/// the address (idempotent). Returns 201 if newly created, 200 if existing was returned.
 async fn create_request(
     State(state): State<BackendState>,
     Json(create_req): Json<CreateForwardingRequest>,
 ) -> impl IntoResponse {
     match state.create_request(create_req) {
-        Ok(request) => {
-            info!(
-                "Created forwarding request {} for address {}",
-                request.id, request.forward_addr
-            );
-            (StatusCode::CREATED, Json(request)).into_response()
+        Ok((request, created)) => {
+            let status_code = if created {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+            (status_code, Json(request)).into_response()
         }
         Err(e) => {
             error!("Failed to create forwarding request: {:#}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ForwardingRequest {
-                    id: String::new(),
-                    forward_addr: String::new(),
-                    dest_domain: 0,
-                    dest_recipient: String::new(),
-                    status: "error".to_string(),
-                    created_at: None,
-                }),
-            )
-                .into_response()
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }
 }
 
-/// PATCH /forwarding-requests/{id}/status - Update forwarding request status
-/// When status is "completed", the request is removed from storage
-async fn update_request_status(
-    Path(id): Path<String>,
+/// DELETE /forwarding-requests/:addr - Mark forwarding as complete by removing the request
+async fn complete_request(
+    Path(addr): Path<String>,
     State(state): State<BackendState>,
-    Json(update): Json<StatusUpdate>,
 ) -> impl IntoResponse {
-    // If status is "completed", remove from storage
-    if update.status == "completed" {
-        match state.remove_request(&id) {
-            Ok(Some(request)) => {
-                info!(
-                    "Removed completed request {} (address {}) from storage",
-                    id, request.forward_addr
-                );
-                return (StatusCode::OK, Json(request)).into_response();
-            }
-            Ok(None) => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(ForwardingRequest {
-                        id: String::new(),
-                        forward_addr: String::new(),
-                        dest_domain: 0,
-                        dest_recipient: String::new(),
-                        status: "error".to_string(),
-                        created_at: None,
-                    }),
-                )
-                    .into_response();
-            }
-            Err(e) => {
-                error!("Failed to remove request {}: {:#}", id, e);
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ForwardingRequest {
-                        id: String::new(),
-                        forward_addr: String::new(),
-                        dest_domain: 0,
-                        dest_recipient: String::new(),
-                        status: "error".to_string(),
-                        created_at: None,
-                    }),
-                )
-                    .into_response();
-            }
-        }
-    }
-
-    // For other status updates, just update in-place
-    match state.update_status(&id, &update.status) {
+    match state.remove_by_addr(&addr) {
         Ok(Some(request)) => {
-            info!(
-                "Updated status for request {} (address {}): {}",
-                id, request.forward_addr, update.status
-            );
+            info!("Removed completed request for address {}", addr);
             (StatusCode::OK, Json(request)).into_response()
         }
-        Ok(None) => (
-            StatusCode::NOT_FOUND,
-            Json(ForwardingRequest {
-                id: String::new(),
-                forward_addr: String::new(),
-                dest_domain: 0,
-                dest_recipient: String::new(),
-                status: "error".to_string(),
-                created_at: None,
-            }),
-        )
-            .into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => {
-            error!("Failed to update request {}: {:#}", id, e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ForwardingRequest {
-                    id: String::new(),
-                    forward_addr: String::new(),
-                    dest_domain: 0,
-                    dest_recipient: String::new(),
-                    status: "error".to_string(),
-                    created_at: None,
-                }),
-            )
-                .into_response()
+            error!("Failed to remove request for {}: {:#}", addr, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }
 }

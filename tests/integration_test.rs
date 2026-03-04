@@ -18,11 +18,9 @@ async fn test_backend_api() {
     let forward_addr = derive_forwarding_address(dest_domain, dest_recipient).unwrap();
 
     let request = ForwardingRequest {
-        id: "test-request-1".to_string(),
         forward_addr: forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
-        status: "pending".to_string(),
         created_at: None,
     };
 
@@ -51,26 +49,20 @@ async fn test_backend_api() {
     let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].forward_addr, forward_addr);
-    assert_eq!(requests[0].status, "pending");
 
-    // Test PATCH /forwarding-requests/{id}/status
-    let update = serde_json::json!({
-        "status": "completed"
-    });
-
+    // Test DELETE /forwarding-requests/{addr} - mark as completed
     let response = client
-        .patch(format!(
-            "{}/forwarding-requests/test-request-1/status",
-            base_url
+        .delete(format!(
+            "{}/forwarding-requests/{}",
+            base_url, forward_addr
         ))
-        .json(&update)
         .send()
         .await
         .unwrap();
 
     assert_eq!(response.status(), 200);
 
-    // Verify the request was removed from storage (completed requests are deleted)
+    // Verify the request was removed from storage
     let response = client
         .get(format!("{}/forwarding-requests", base_url))
         .send()
@@ -78,7 +70,7 @@ async fn test_backend_api() {
         .unwrap();
 
     let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
-    assert_eq!(requests.len(), 0); // Request should be removed after completion
+    assert_eq!(requests.len(), 0);
 }
 
 #[test]
@@ -122,15 +114,14 @@ fn test_balance_cache_serialization() {
 }
 
 #[tokio::test]
-async fn test_auto_generated_ids() {
-    use forwarding_relayer::{Backend, CreateForwardingRequest};
+async fn test_idempotent_create() {
+    use forwarding_relayer::CreateForwardingRequest;
 
     // Clean up any existing test database
     let _ = std::fs::remove_file("storage/test_backend_3002.db");
 
     // Start backend
     let backend = Backend::new(3002, "storage/test_backend_3002.db".into()).unwrap();
-    let _state = backend.state();
 
     // Start the server in the background
     tokio::spawn(async move {
@@ -143,7 +134,6 @@ async fn test_auto_generated_ids() {
     let client = Client::new();
     let base_url = "http://127.0.0.1:3002";
 
-    // Create first request via POST (no ID provided)
     let create_req = CreateForwardingRequest {
         forward_addr: "celestia1test1".to_string(),
         dest_domain: 42161,
@@ -151,6 +141,7 @@ async fn test_auto_generated_ids() {
             .to_string(),
     };
 
+    // First POST - should create
     let response = client
         .post(format!("{}/forwarding-requests", base_url))
         .json(&create_req)
@@ -159,32 +150,22 @@ async fn test_auto_generated_ids() {
         .unwrap();
 
     assert_eq!(response.status(), 201); // Created
+    let created: ForwardingRequest = response.json().await.unwrap();
+    assert_eq!(created.forward_addr, "celestia1test1");
 
-    let created1: ForwardingRequest = response.json().await.unwrap();
-    assert_eq!(created1.id, "req-000001"); // First auto-generated ID
-    assert_eq!(created1.forward_addr, "celestia1test1");
-    assert_eq!(created1.status, "pending");
-
-    // Create second request - should get next ID
-    let create_req2 = CreateForwardingRequest {
-        forward_addr: "celestia1test1".to_string(), // Same address!
-        dest_domain: 10,
-        dest_recipient: "0x000000000000000000000000A0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
-            .to_string(),
-    };
-
+    // Second POST for the same address - should return existing
     let response2 = client
         .post(format!("{}/forwarding-requests", base_url))
-        .json(&create_req2)
+        .json(&create_req)
         .send()
         .await
         .unwrap();
 
-    let created2: ForwardingRequest = response2.json().await.unwrap();
-    assert_eq!(created2.id, "req-000002"); // Second auto-generated ID
-    assert_eq!(created2.forward_addr, "celestia1test1"); // Same address as first!
+    assert_eq!(response2.status(), 200); // OK - returned existing, not 201 Created
+    let returned: ForwardingRequest = response2.json().await.unwrap();
+    assert_eq!(returned.forward_addr, "celestia1test1");
 
-    // List all requests - should have both
+    // List all requests - should only have one
     let response = client
         .get(format!("{}/forwarding-requests", base_url))
         .send()
@@ -192,10 +173,6 @@ async fn test_auto_generated_ids() {
         .unwrap();
 
     let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].id, "req-000001");
-    assert_eq!(requests[1].id, "req-000002");
-
-    // Both have the same address but different IDs - no collision!
-    assert_eq!(requests[0].forward_addr, requests[1].forward_addr);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].forward_addr, "celestia1test1");
 }
