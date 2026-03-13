@@ -58,10 +58,15 @@ impl Relayer {
 
         info!("Relayer address: {}", celestia.signer_address());
 
+        let http_client = HttpClient::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .context("Failed to build HTTP client")?;
+
         Ok(Self {
             config,
             celestia,
-            http_client: HttpClient::new(),
+            http_client,
         })
     }
 

@@ -4,6 +4,7 @@ use celestia_proto::cosmos::bank::v1beta1::{
     query_client::QueryClient as BankQueryClient, QueryAllBalancesRequest,
 };
 use cosmrs::{crypto::secp256k1::SigningKey, AccountId};
+use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{info, warn};
 
@@ -12,6 +13,12 @@ use crate::proto::celestia::forwarding::v1::{
 };
 use crate::proto::cosmos::base::v1beta1::Coin;
 use crate::Balance;
+
+/// Timeout for gRPC queries (balance, fee).
+const GRPC_QUERY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Timeout for transaction submission (includes waiting for confirmation).
+const TX_SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Implements the Name trait for Protobuf message type URLs.
 impl prost::Name for MsgForward {
@@ -30,12 +37,15 @@ impl CelestiaClient {
     /// Creates and returns a new CelestiaClient using the provided private key.
     pub(crate) async fn new(grpc_url: String, private_key_hex: String) -> Result<Self> {
         let (private_key_hex, signer_address) = Self::prepare_private_key(&private_key_hex)?;
-        let endpoint = Endpoint::from_shared(grpc_url.clone()).with_context(|| {
-            format!(
-                "Invalid CELESTIA_GRPC URL (expected http/https): {}",
-                grpc_url
-            )
-        })?;
+        let endpoint = Endpoint::from_shared(grpc_url.clone())
+            .with_context(|| {
+                format!(
+                    "Invalid CELESTIA_GRPC URL (expected http/https): {}",
+                    grpc_url
+                )
+            })?
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(GRPC_QUERY_TIMEOUT);
 
         let channel = endpoint.connect_lazy();
 
@@ -71,15 +81,18 @@ impl CelestiaClient {
     /// Query all balances for an address via Cosmos bank gRPC query
     pub(crate) async fn query_balances(&self, address: &str) -> Result<Vec<Balance>> {
         let mut client = BankQueryClient::new(self.channel.clone());
-        let response = client
-            .all_balances(QueryAllBalancesRequest {
+        let response = tokio::time::timeout(
+            GRPC_QUERY_TIMEOUT,
+            client.all_balances(QueryAllBalancesRequest {
                 address: address.to_string(),
                 pagination: None,
                 resolve_denom: false,
-            })
-            .await
-            .context("Failed to query balances via gRPC")?
-            .into_inner();
+            }),
+        )
+        .await
+        .context("Balance query timed out")?
+        .context("Failed to query balances via gRPC")?
+        .into_inner();
 
         Ok(response
             .balances
@@ -94,22 +107,30 @@ impl CelestiaClient {
     /// Query IGP fee quote for a destination domain via forwarding module gRPC query
     pub(crate) async fn query_igp_fee(&self, dest_domain: u32) -> Result<String> {
         let mut client = ForwardingQueryClient::new(self.channel.clone());
-        let response = client
-            .quote_forwarding_fee(QueryQuoteForwardingFeeRequest { dest_domain })
-            .await;
+        let response = tokio::time::timeout(
+            GRPC_QUERY_TIMEOUT,
+            client.quote_forwarding_fee(QueryQuoteForwardingFeeRequest { dest_domain }),
+        )
+        .await;
 
         match response {
-            Ok(resp) => Ok(resp
+            Ok(Ok(resp)) => Ok(resp
                 .into_inner()
                 .fee
                 .map(|f| f.amount)
                 .unwrap_or_else(|| "0".to_string())),
-            Err(err) => {
+            Ok(Err(err)) => {
                 warn!(
                     "Failed to query IGP fee for domain {} via forwarding gRPC query: {}",
                     dest_domain, err
                 );
-                // Return a default fee of 0 if query fails
+                Ok("0".to_string())
+            }
+            Err(_) => {
+                warn!(
+                    "IGP fee query timed out for domain {}",
+                    dest_domain
+                );
                 Ok("0".to_string())
             }
         }
@@ -154,11 +175,14 @@ impl CelestiaClient {
             }),
         };
 
-        let tx_info = self
-            .tx_client
-            .submit_message(msg_forward, CelestiaTxConfig::default())
-            .await
-            .context("Failed to submit MsgForward")?;
+        let tx_info = tokio::time::timeout(
+            TX_SUBMIT_TIMEOUT,
+            self.tx_client
+                .submit_message(msg_forward, CelestiaTxConfig::default()),
+        )
+        .await
+        .context("Transaction submission timed out")?
+        .context("Failed to submit MsgForward")?;
 
         let tx_hash = tx_info.hash.to_string();
         info!("Transaction broadcast successfully: {}", tx_hash);
