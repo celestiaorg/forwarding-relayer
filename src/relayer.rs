@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use metrics::{counter, gauge};
 use reqwest::Client as HttpClient;
-use std::collections::HashSet;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -54,7 +53,6 @@ pub struct Relayer {
     config: RelayerConfig,
     celestia: CelestiaClient,
     http_client: HttpClient,
-    signer_balance_denoms: HashSet<String>,
 }
 
 impl Relayer {
@@ -67,7 +65,6 @@ impl Relayer {
 
         let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(10))
-            .no_proxy()
             .build()
             .context("Failed to build HTTP client")?;
 
@@ -75,7 +72,6 @@ impl Relayer {
             config,
             celestia,
             http_client,
-            signer_balance_denoms: HashSet::new(),
         })
     }
 
@@ -289,21 +285,13 @@ impl Relayer {
     async fn refresh_signer_balance_metrics(&mut self) -> Result<()> {
         let signer_address = self.celestia.signer_address().to_string();
         let balances = self.celestia.query_balances(&signer_address).await?;
-        let mut current_denoms = HashSet::new();
+        let utia_balance = balances
+            .into_iter()
+            .find(|balance| balance.denom == "utia")
+            .and_then(|balance| parse_metric_amount(&balance.amount))
+            .unwrap_or(0.0);
 
-        for balance in balances {
-            current_denoms.insert(balance.denom.clone());
-
-            if let Some(amount) = parse_metric_amount(&balance.amount) {
-                gauge!("signer_balance", "denom" => balance.denom.clone()).set(amount);
-            }
-        }
-
-        for denom in self.signer_balance_denoms.difference(&current_denoms) {
-            gauge!("signer_balance", "denom" => denom.to_string()).set(0.0);
-        }
-
-        self.signer_balance_denoms = current_denoms;
+        gauge!("signer_balance", "denom" => "utia").set(utia_balance);
 
         Ok(())
     }
