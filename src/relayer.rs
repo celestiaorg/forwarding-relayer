@@ -80,43 +80,42 @@ impl Relayer {
     /// Fetch forwarding requests from the backend and record backend-call metrics.
     async fn fetch_forwarding_requests(&self) -> Result<Vec<ForwardingRequest>> {
         let url = format!("{}/forwarding-requests", self.config.backend_url);
-
-        let result = async {
-            let response = self
-                .http_client
-                .get(&url)
-                .send()
-                .await
-                .context("Failed to fetch forwarding requests from backend")?;
-
-            if !response.status().is_success() {
-                anyhow::bail!(
-                    "Backend returned error: {} - {}",
-                    response.status(),
-                    response.text().await.unwrap_or_default()
-                );
-            }
-
-            response
-                .json::<Vec<ForwardingRequest>>()
-                .await
-                .context("Failed to parse forwarding requests")
-        }
-        .await;
-
-        match &result {
-            Ok(requests) => {
-                self.metrics
-                    .observe_backend_call("fetch_requests", "success");
-                self.metrics.set_requests_fetched(requests.len());
-            }
+        let response = match self.http_client.get(&url).send().await {
+            Ok(response) => response,
             Err(err) => {
+                let err = anyhow::Error::new(err)
+                    .context("Failed to fetch forwarding requests from backend");
                 self.metrics
-                    .observe_backend_call("fetch_requests", classify_error(err));
+                    .observe_backend_call("fetch_requests", classify_error(&err));
+                return Err(err);
             }
+        };
+
+        if !response.status().is_success() {
+            let err = anyhow::anyhow!(
+                "Backend returned error: {} - {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            );
+            self.metrics
+                .observe_backend_call("fetch_requests", classify_error(&err));
+            return Err(err);
         }
 
-        result
+        let requests = match response.json::<Vec<ForwardingRequest>>().await {
+            Ok(requests) => requests,
+            Err(err) => {
+                let err = anyhow::Error::new(err).context("Failed to parse forwarding requests");
+                self.metrics
+                    .observe_backend_call("fetch_requests", classify_error(&err));
+                return Err(err);
+            }
+        };
+
+        self.metrics
+            .observe_backend_call("fetch_requests", "success");
+        self.metrics.set_requests_fetched(requests.len());
+        Ok(requests)
     }
 
     /// Notify the backend that forwarding for an address completed.
@@ -125,40 +124,32 @@ impl Relayer {
             "{}/forwarding-requests/{}",
             self.config.backend_url, forward_addr
         );
-
-        let result = async {
-            let response = self
-                .http_client
-                .delete(&url)
-                .send()
-                .await
-                .with_context(|| format!("Failed to complete request for {forward_addr}"))?;
-
-            if !response.status().is_success() {
-                anyhow::bail!(
-                    "Backend completion returned error for {}: {}",
-                    forward_addr,
-                    response.status()
-                );
-            }
-
-            Ok(())
-        }
-        .await;
-
-        match &result {
-            Ok(()) => {
-                self.metrics
-                    .observe_backend_call("complete_request", "success");
-                info!("Removed completed request for address {}", forward_addr);
-            }
+        let response = match self.http_client.delete(&url).send().await {
+            Ok(response) => response,
             Err(err) => {
+                let err = anyhow::Error::new(err)
+                    .context(format!("Failed to complete request for {forward_addr}"));
                 self.metrics
-                    .observe_backend_call("complete_request", classify_error(err));
+                    .observe_backend_call("complete_request", classify_error(&err));
+                return Err(err);
             }
+        };
+
+        if !response.status().is_success() {
+            let err = anyhow::anyhow!(
+                "Backend completion returned error for {}: {}",
+                forward_addr,
+                response.status()
+            );
+            self.metrics
+                .observe_backend_call("complete_request", classify_error(&err));
+            return Err(err);
         }
 
-        result
+        self.metrics
+            .observe_backend_call("complete_request", "success");
+        info!("Removed completed request for address {}", forward_addr);
+        Ok(())
     }
 
     /// Query balances for a forwarding address and record Celestia-call metrics.
