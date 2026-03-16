@@ -80,7 +80,6 @@ impl Relayer {
     /// Fetch forwarding requests from the backend and record backend-call metrics.
     async fn fetch_forwarding_requests(&self) -> Result<Vec<ForwardingRequest>> {
         let url = format!("{}/forwarding-requests", self.config.backend_url);
-        let start = Instant::now();
 
         let result = async {
             let response = self
@@ -105,7 +104,6 @@ impl Relayer {
         }
         .await;
 
-        let _elapsed = start.elapsed();
         match &result {
             Ok(requests) => {
                 self.metrics
@@ -127,7 +125,6 @@ impl Relayer {
             "{}/forwarding-requests/{}",
             self.config.backend_url, forward_addr
         );
-        let start = Instant::now();
 
         let result = async {
             let response = self
@@ -149,7 +146,6 @@ impl Relayer {
         }
         .await;
 
-        let _elapsed = start.elapsed();
         match &result {
             Ok(()) => {
                 self.metrics
@@ -262,7 +258,7 @@ impl Relayer {
     /// Main relayer loop
     pub async fn run(&mut self) -> Result<()> {
         if let Some(bind) = self.config.metrics_bind.as_deref() {
-            let _metrics_server = spawn_metrics_server(bind, self.metrics.registry()).await?;
+            spawn_metrics_server(bind, self.metrics.registry()).await?;
             info!("Relayer metrics listening on {}", bind);
         }
 

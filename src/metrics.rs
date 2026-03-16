@@ -45,20 +45,19 @@ pub fn metrics_router(registry: Registry) -> Router {
         .with_state(MetricsState { registry })
 }
 
-pub async fn spawn_metrics_server(
-    bind: &str,
-    registry: Registry,
-) -> Result<tokio::task::JoinHandle<()>> {
+pub async fn spawn_metrics_server(bind: &str, registry: Registry) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .with_context(|| format!("Failed to bind metrics listener on {bind}"))?;
     let app = metrics_router(registry);
 
-    Ok(tokio::spawn(async move {
+    tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app).await {
             error!("Metrics server stopped: {err:#}");
         }
-    }))
+    });
+
+    Ok(())
 }
 
 pub fn encode_registry(registry: &Registry) -> Result<String> {

@@ -346,7 +346,7 @@ impl Backend {
     pub async fn serve(self) -> Result<()> {
         let metrics_bind = self.metrics_bind.clone();
         if let Some(bind) = metrics_bind.as_deref() {
-            let _metrics_server = spawn_metrics_server(bind, self.metrics.registry()).await?;
+            spawn_metrics_server(bind, self.metrics.registry()).await?;
             info!("Backend metrics listening on {}", bind);
         }
 
