@@ -403,14 +403,16 @@ async fn create_request(
 ) -> impl IntoResponse {
     match state.create_request(create_req) {
         Ok((request, created)) => {
-            if created {
-                counter!("requests_created_total", "result" => "created").increment(1);
-            } else {
-                counter!("requests_created_total", "result" => "existing").increment(1);
-            }
+            if state.metrics_enabled() {
+                if created {
+                    counter!("requests_created_total", "result" => "created").increment(1);
+                } else {
+                    counter!("requests_created_total", "result" => "existing").increment(1);
+                }
 
-            if let Err(err) = state.refresh_metrics() {
-                error!("Failed to refresh backend metrics after create: {err:#}");
+                if let Err(err) = state.refresh_metrics() {
+                    error!("Failed to refresh backend metrics after create: {err:#}");
+                }
             }
 
             let status_code = if created {
@@ -421,7 +423,9 @@ async fn create_request(
             (status_code, Json(request)).into_response()
         }
         Err(e) => {
-            counter!("requests_created_total", "result" => "error").increment(1);
+            if state.metrics_enabled() {
+                counter!("requests_created_total", "result" => "error").increment(1);
+            }
             error!("Failed to create forwarding request: {:#}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
@@ -435,19 +439,25 @@ async fn complete_request(
 ) -> impl IntoResponse {
     match state.remove_by_addr(&addr) {
         Ok(Some(request)) => {
-            counter!("requests_completed_total", "result" => "removed").increment(1);
-            if let Err(err) = state.refresh_metrics() {
-                error!("Failed to refresh backend metrics after delete: {err:#}");
+            if state.metrics_enabled() {
+                counter!("requests_completed_total", "result" => "removed").increment(1);
+                if let Err(err) = state.refresh_metrics() {
+                    error!("Failed to refresh backend metrics after delete: {err:#}");
+                }
             }
             info!("Removed completed request for address {}", addr);
             (StatusCode::OK, Json(request)).into_response()
         }
         Ok(None) => {
-            counter!("requests_completed_total", "result" => "not_found").increment(1);
+            if state.metrics_enabled() {
+                counter!("requests_completed_total", "result" => "not_found").increment(1);
+            }
             StatusCode::NOT_FOUND.into_response()
         }
         Err(e) => {
-            counter!("requests_completed_total", "result" => "error").increment(1);
+            if state.metrics_enabled() {
+                counter!("requests_completed_total", "result" => "error").increment(1);
+            }
             error!("Failed to remove request for {}: {:#}", addr, e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
