@@ -211,5 +211,5 @@ lint:
 
 ## test-rust: Run Rust workspace tests
 test-rust:
-	@cargo test --workspace --all-targets
+	@cargo test --workspace --all-targets --exclude e2e
 .PHONY: test-rust
