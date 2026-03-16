@@ -208,3 +208,8 @@ fmt-check:
 lint:
 	@cargo clippy --workspace --all-targets --all-features -- -D warnings
 .PHONY: lint
+
+## test-rust: Run Rust workspace tests
+test-rust:
+	@cargo test --workspace --all-targets
+.PHONY: test-rust
