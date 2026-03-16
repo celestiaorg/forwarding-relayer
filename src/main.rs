@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
         }
         Command::Backend(config) => {
             // Create and run backend
-            let backend = Backend::new(config.port, config.db_path)?;
+            let backend = Backend::new(config.port, config.db_path, config.metrics_bind)?;
             backend.serve().await
         }
         Command::DeriveAddress {

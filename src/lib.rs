@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 mod backend;
 mod client;
+mod metrics;
 mod proto;
 mod relayer;
 
@@ -56,7 +57,7 @@ pub struct ForwardingRequest {
 }
 
 /// Request body for creating a new forwarding request
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateForwardingRequest {
     pub forward_addr: String,
     pub dest_domain: u32,

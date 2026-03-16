@@ -3,7 +3,7 @@ use celestia_grpc::{GrpcClient, TxConfig as CelestiaTxConfig};
 use celestia_proto::cosmos::bank::v1beta1::{
     query_client::QueryClient as BankQueryClient, QueryAllBalancesRequest,
 };
-use cosmrs::{crypto::secp256k1::SigningKey, AccountId};
+use cosmrs::crypto::secp256k1::SigningKey;
 use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{info, warn};
@@ -30,7 +30,7 @@ impl prost::Name for MsgForward {
 pub(crate) struct CelestiaClient {
     channel: Channel,
     tx_client: GrpcClient,
-    signer_address: AccountId,
+    signer_address: String,
 }
 
 impl CelestiaClient {
@@ -64,7 +64,7 @@ impl CelestiaClient {
 
     /// Parses the private key and returns the normalized string (without 0x prefix)
     /// and the associated bech32 account address.
-    fn prepare_private_key(private_key_hex: &str) -> Result<(String, AccountId)> {
+    fn prepare_private_key(private_key_hex: &str) -> Result<(String, String)> {
         let normalized_private_key_hex = private_key_hex.trim().trim_start_matches("0x");
         let private_key =
             hex::decode(normalized_private_key_hex).context("Invalid private key hex")?;
@@ -75,7 +75,10 @@ impl CelestiaClient {
             .account_id("celestia")
             .map_err(|e| anyhow::anyhow!("Failed to get account ID: {}", e))?;
 
-        Ok((normalized_private_key_hex.to_string(), signer_address))
+        Ok((
+            normalized_private_key_hex.to_string(),
+            signer_address.to_string(),
+        ))
     }
 
     /// Query all balances for an address via Cosmos bank gRPC query
@@ -127,17 +130,14 @@ impl CelestiaClient {
                 Ok("0".to_string())
             }
             Err(_) => {
-                warn!(
-                    "IGP fee query timed out for domain {}",
-                    dest_domain
-                );
+                warn!("IGP fee query timed out for domain {}", dest_domain);
                 Ok("0".to_string())
             }
         }
     }
 
     /// Returns the configured signer address.
-    pub(crate) fn signer_address(&self) -> &AccountId {
+    pub(crate) fn signer_address(&self) -> &str {
         &self.signer_address
     }
 
@@ -165,7 +165,7 @@ impl CelestiaClient {
         };
 
         let msg_forward = MsgForward {
-            signer: self.signer_address.to_string(),
+            signer: self.signer_address.clone(),
             forward_addr: forward_addr.to_string(),
             dest_domain,
             dest_recipient: dest_recipient.to_string(),

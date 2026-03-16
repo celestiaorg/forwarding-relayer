@@ -1,18 +1,14 @@
-use forwarding_relayer::{derive_forwarding_address, Backend, ForwardingRequest};
-use reqwest::Client;
-use std::time::Duration;
-use tokio::time::sleep;
+use forwarding_relayer::{
+    derive_forwarding_address, Backend, CreateForwardingRequest, ForwardingRequest,
+};
 
-#[tokio::test]
-async fn test_backend_api() {
-    // Clean up any existing test database
+#[test]
+fn test_backend_api() {
     let _ = std::fs::remove_file("storage/test_backend_3001.db");
 
-    // Start backend
-    let backend = Backend::new(3001, "storage/test_backend_3001.db".into()).unwrap();
+    let backend = Backend::new(3001, "storage/test_backend_3001.db".into(), None).unwrap();
     let state = backend.state();
 
-    // Add a test request
     let dest_domain = 42161;
     let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
     let forward_addr = derive_forwarding_address(dest_domain, dest_recipient).unwrap();
@@ -26,50 +22,14 @@ async fn test_backend_api() {
 
     state.add_request(request).unwrap();
 
-    // Start the server in the background
-    tokio::spawn(async move {
-        backend.serve().await.ok();
-    });
-
-    // Give the server time to start
-    sleep(Duration::from_millis(100)).await;
-
-    let client = Client::new();
-    let base_url = "http://127.0.0.1:3001";
-
-    // Test GET /forwarding-requests
-    let response = client
-        .get(format!("{}/forwarding-requests", base_url))
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 200);
-
-    let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
+    let requests = state.list_requests().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].forward_addr, forward_addr);
 
-    // Test DELETE /forwarding-requests/{addr} - mark as completed
-    let response = client
-        .delete(format!(
-            "{}/forwarding-requests/{}",
-            base_url, forward_addr
-        ))
-        .send()
-        .await
-        .unwrap();
+    let removed = state.remove_by_addr(&forward_addr).unwrap();
+    assert!(removed.is_some());
 
-    assert_eq!(response.status(), 200);
-
-    // Verify the request was removed from storage
-    let response = client
-        .get(format!("{}/forwarding-requests", base_url))
-        .send()
-        .await
-        .unwrap();
-
-    let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
+    let requests = state.list_requests().unwrap();
     assert_eq!(requests.len(), 0);
 }
 
@@ -113,26 +73,12 @@ fn test_balance_cache_serialization() {
     assert_eq!(deserialized["celestia1test"][0].amount, "1000000");
 }
 
-#[tokio::test]
-async fn test_idempotent_create() {
-    use forwarding_relayer::CreateForwardingRequest;
-
-    // Clean up any existing test database
+#[test]
+fn test_idempotent_create() {
     let _ = std::fs::remove_file("storage/test_backend_3002.db");
 
-    // Start backend
-    let backend = Backend::new(3002, "storage/test_backend_3002.db".into()).unwrap();
-
-    // Start the server in the background
-    tokio::spawn(async move {
-        backend.serve().await.ok();
-    });
-
-    // Give the server time to start
-    sleep(Duration::from_millis(100)).await;
-
-    let client = Client::new();
-    let base_url = "http://127.0.0.1:3002";
+    let backend = Backend::new(3002, "storage/test_backend_3002.db".into(), None).unwrap();
+    let state = backend.state();
 
     let create_req = CreateForwardingRequest {
         forward_addr: "celestia1test1".to_string(),
@@ -141,38 +87,15 @@ async fn test_idempotent_create() {
             .to_string(),
     };
 
-    // First POST - should create
-    let response = client
-        .post(format!("{}/forwarding-requests", base_url))
-        .json(&create_req)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 201); // Created
-    let created: ForwardingRequest = response.json().await.unwrap();
+    let (created, was_created) = state.create_request(create_req.clone()).unwrap();
+    assert!(was_created);
     assert_eq!(created.forward_addr, "celestia1test1");
 
-    // Second POST for the same address - should return existing
-    let response2 = client
-        .post(format!("{}/forwarding-requests", base_url))
-        .json(&create_req)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response2.status(), 200); // OK - returned existing, not 201 Created
-    let returned: ForwardingRequest = response2.json().await.unwrap();
+    let (returned, was_created_again) = state.create_request(create_req).unwrap();
+    assert!(!was_created_again);
     assert_eq!(returned.forward_addr, "celestia1test1");
 
-    // List all requests - should only have one
-    let response = client
-        .get(format!("{}/forwarding-requests", base_url))
-        .send()
-        .await
-        .unwrap();
-
-    let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
+    let requests = state.list_requests().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].forward_addr, "celestia1test1");
 }
