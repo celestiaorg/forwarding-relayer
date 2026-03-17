@@ -97,33 +97,6 @@ fn test_derive_forwarding_address() {
     assert!(address.len() > 20);
 }
 
-#[test]
-fn test_balance_cache_serialization() {
-    use forwarding_relayer::Balance;
-    use std::collections::HashMap;
-
-    let mut cache: HashMap<String, Vec<Balance>> = HashMap::new();
-
-    cache.insert(
-        "celestia1test".to_string(),
-        vec![Balance {
-            denom: "utia".to_string(),
-            amount: "1000000".to_string(),
-        }],
-    );
-
-    // Test serialization
-    let json = serde_json::to_string(&cache).unwrap();
-    assert!(json.contains("celestia1test"));
-    assert!(json.contains("utia"));
-
-    // Test deserialization
-    let deserialized: HashMap<String, Vec<Balance>> = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized.len(), 1);
-    assert_eq!(deserialized["celestia1test"][0].denom, "utia");
-    assert_eq!(deserialized["celestia1test"][0].amount, "1000000");
-}
-
 #[tokio::test]
 async fn test_idempotent_create() {
     use forwarding_relayer::CreateForwardingRequest;

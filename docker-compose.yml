@@ -135,7 +135,6 @@ services:
       - PRIVATE_KEY_HEX=6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c
       - POLL_INTERVAL=6
       - IGP_FEE_BUFFER=1.1
-      - BALANCE_CACHE_PATH=/app/storage/balance_cache.db
     volumes:
       - forwarding-relayer-data:/app/storage
     command: ["relayer"]

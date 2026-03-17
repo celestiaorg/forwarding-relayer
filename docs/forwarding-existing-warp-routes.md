@@ -128,7 +128,6 @@ Leave this running. It polls the backend for forwarding requests and watches for
 | `--private-key-hex` | `PRIVATE_KEY_HEX` | (required) | secp256k1 private key hex for signing |
 | `--poll-interval` | `POLL_INTERVAL` | `6` | Seconds between poll cycles |
 | `--igp-fee-buffer` | `IGP_FEE_BUFFER` | `1.1` | Multiplier on quoted IGP fee |
-| `--balance-cache-path` | `BALANCE_CACHE_PATH` | `storage/balance_cache.db` | SQLite cache path |
 
 ## Step 8: Send Tokens to the Forwarding Address
 
