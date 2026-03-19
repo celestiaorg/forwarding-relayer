@@ -18,6 +18,8 @@ celestia-grpc = "0.12"
 celestia-proto = { version = "0.12.1", features = ["tonic"] }
 cosmrs = { version = "0.19", features = ["cosmwasm", "rpc", "grpc"] }
 hex = "0.4"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
 prost = "0.13"
 prost-types = "0.13"
 reqwest = { version = "0.12", features = ["json"] }

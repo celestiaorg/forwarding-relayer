@@ -193,3 +193,23 @@ logs-backend:
 logs-relayer:
 	@docker logs -f forwarding-relayer
 .PHONY: logs-relayer
+
+## fmt: Format all Rust workspace crates with rustfmt
+fmt:
+	@cargo fmt --all
+.PHONY: fmt
+
+## fmt-check: Check Rust formatting across the workspace
+fmt-check:
+	@cargo fmt --all --check
+.PHONY: fmt-check
+
+## lint: Run clippy across the Rust workspace
+lint:
+	@cargo clippy --workspace --all-targets --all-features -- -D warnings
+.PHONY: lint
+
+## test-rust: Run Rust workspace tests
+test-rust:
+	@cargo test --workspace --all-targets --exclude e2e
+.PHONY: test-rust

@@ -17,13 +17,15 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Relayer(config) => {
+            forwarding_relayer::init_metrics_exporter(config.metrics_port)?;
             // Create and run relayer
             let mut relayer = Relayer::new(config).await?;
             relayer.run().await
         }
         Command::Backend(config) => {
+            forwarding_relayer::init_metrics_exporter(config.metrics_port)?;
             // Create and run backend
-            let backend = Backend::new(config.port, config.db_path)?;
+            let backend = Backend::new(config.port, config.db_path, config.metrics_port.is_some())?;
             backend.serve().await
         }
         Command::DeriveAddress {

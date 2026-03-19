@@ -7,14 +7,18 @@ use axum::{
     Json, Router,
 };
 use clap::Parser;
+use metrics::{counter, gauge};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tracing::{error, info};
 
 use serde::Deserialize;
 
 use crate::{derive_forwarding_address, CreateForwardingRequest, ForwardingRequest};
+
+const BACKEND_METRICS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Backend configuration
 #[derive(Parser, Debug)]
@@ -26,6 +30,16 @@ pub struct BackendConfig {
     /// Path to database file
     #[arg(long, env = "DB_PATH", default_value = "storage/backend.db")]
     pub db_path: PathBuf,
+
+    /// Metrics port for Prometheus scraping
+    #[arg(long, env = "BACKEND_METRICS_PORT")]
+    pub metrics_port: Option<u16>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingRequestMetricsSnapshot {
+    pub pending_requests: usize,
+    pub oldest_created_at: Option<String>,
 }
 
 /// SQLite storage for backend forwarding requests
@@ -89,7 +103,10 @@ impl BackendStorage {
         let inserted = conn.changes() > 0;
 
         let request = if inserted {
-            info!("Created forwarding request for address {}", create_req.forward_addr);
+            info!(
+                "Created forwarding request for address {}",
+                create_req.forward_addr
+            );
             ForwardingRequest {
                 forward_addr: create_req.forward_addr,
                 dest_domain: create_req.dest_domain,
@@ -172,6 +189,31 @@ impl BackendStorage {
         Ok(requests)
     }
 
+    pub fn pending_metrics_snapshot(&self) -> Result<PendingRequestMetricsSnapshot> {
+        let conn = self.conn.lock().unwrap();
+
+        let pending_requests =
+            conn.query_row("SELECT COUNT(*) FROM forwarding_requests", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .context("Failed to query pending request count")? as usize;
+
+        let oldest_created_at = conn
+            .query_row(
+                "SELECT MIN(created_at) FROM forwarding_requests",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("Failed to query oldest pending request timestamp")?
+            .flatten();
+
+        Ok(PendingRequestMetricsSnapshot {
+            pending_requests,
+            oldest_created_at,
+        })
+    }
+
     /// Remove a request by address (called when forwarding completes)
     pub fn remove_by_addr(&self, forward_addr: &str) -> Result<Option<ForwardingRequest>> {
         let conn = self.conn.lock().unwrap();
@@ -211,16 +253,18 @@ impl BackendStorage {
 #[derive(Clone)]
 pub struct BackendState {
     storage: Arc<BackendStorage>,
+    metrics_enabled: bool,
 }
 
 impl BackendState {
-    pub fn new(db_path: PathBuf) -> Result<Self> {
+    pub fn new(db_path: PathBuf, metrics_enabled: bool) -> Result<Self> {
         let storage = BackendStorage::new(&db_path)?;
         let count = storage.list_requests()?.len();
         info!("Loaded {} pending requests from database", count);
 
         Ok(Self {
             storage: Arc::new(storage),
+            metrics_enabled,
         })
     }
 
@@ -242,6 +286,20 @@ impl BackendState {
     pub fn remove_by_addr(&self, forward_addr: &str) -> Result<Option<ForwardingRequest>> {
         self.storage.remove_by_addr(forward_addr)
     }
+
+    pub fn metrics_enabled(&self) -> bool {
+        self.metrics_enabled
+    }
+
+    pub fn refresh_metrics(&self) -> Result<()> {
+        if !self.metrics_enabled {
+            return Ok(());
+        }
+
+        let snapshot = self.storage.pending_metrics_snapshot()?;
+        update_pending_request_metrics(&snapshot)?;
+        Ok(())
+    }
 }
 
 /// Backend server
@@ -251,9 +309,9 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn new(port: u16, db_path: PathBuf) -> Result<Self> {
+    pub fn new(port: u16, db_path: PathBuf, metrics_enabled: bool) -> Result<Self> {
         Ok(Self {
-            state: BackendState::new(db_path)?,
+            state: BackendState::new(db_path, metrics_enabled)?,
             port,
         })
     }
@@ -264,16 +322,28 @@ impl Backend {
 
     /// Start the backend server
     pub async fn serve(self) -> Result<()> {
+        if self.state.metrics_enabled() {
+            self.state.refresh_metrics()?;
+
+            let state = self.state.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(BACKEND_METRICS_REFRESH_INTERVAL).await;
+
+                    if let Err(err) = state.refresh_metrics() {
+                        error!("Failed to refresh backend metrics: {err:#}");
+                    }
+                }
+            });
+        }
+
         let app = Router::new()
             .route("/forwarding-address", get(get_forwarding_address))
             .route(
                 "/forwarding-requests",
                 get(list_requests).post(create_request),
             )
-            .route(
-                "/forwarding-requests/:addr",
-                delete(complete_request),
-            )
+            .route("/forwarding-requests/:addr", delete(complete_request))
             .with_state(self.state);
 
         let addr = format!("0.0.0.0:{}", self.port);
@@ -333,6 +403,18 @@ async fn create_request(
 ) -> impl IntoResponse {
     match state.create_request(create_req) {
         Ok((request, created)) => {
+            if state.metrics_enabled() {
+                if created {
+                    counter!("requests_created_total", "result" => "created").increment(1);
+                } else {
+                    counter!("requests_created_total", "result" => "existing").increment(1);
+                }
+
+                if let Err(err) = state.refresh_metrics() {
+                    error!("Failed to refresh backend metrics after create: {err:#}");
+                }
+            }
+
             let status_code = if created {
                 StatusCode::CREATED
             } else {
@@ -341,6 +423,9 @@ async fn create_request(
             (status_code, Json(request)).into_response()
         }
         Err(e) => {
+            if state.metrics_enabled() {
+                counter!("requests_created_total", "result" => "error").increment(1);
+            }
             error!("Failed to create forwarding request: {:#}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
@@ -354,13 +439,50 @@ async fn complete_request(
 ) -> impl IntoResponse {
     match state.remove_by_addr(&addr) {
         Ok(Some(request)) => {
+            if state.metrics_enabled() {
+                counter!("requests_completed_total", "result" => "removed").increment(1);
+                if let Err(err) = state.refresh_metrics() {
+                    error!("Failed to refresh backend metrics after delete: {err:#}");
+                }
+            }
             info!("Removed completed request for address {}", addr);
             (StatusCode::OK, Json(request)).into_response()
         }
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(None) => {
+            if state.metrics_enabled() {
+                counter!("requests_completed_total", "result" => "not_found").increment(1);
+            }
+            StatusCode::NOT_FOUND.into_response()
+        }
         Err(e) => {
+            if state.metrics_enabled() {
+                counter!("requests_completed_total", "result" => "error").increment(1);
+            }
             error!("Failed to remove request for {}: {:#}", addr, e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
         }
     }
+}
+
+fn update_pending_request_metrics(snapshot: &PendingRequestMetricsSnapshot) -> Result<()> {
+    gauge!("pending_requests").set(snapshot.pending_requests as f64);
+
+    let age_seconds = oldest_pending_request_age_seconds(snapshot.oldest_created_at.as_deref())?;
+    gauge!("oldest_pending_request_age_seconds").set(age_seconds);
+
+    Ok(())
+}
+
+pub fn oldest_pending_request_age_seconds(created_at: Option<&str>) -> Result<f64> {
+    let Some(created_at) = created_at else {
+        return Ok(0.0);
+    };
+
+    let created_at = chrono::DateTime::parse_from_rfc3339(created_at)
+        .with_context(|| format!("Invalid forwarding request timestamp: {created_at}"))?;
+    let age = chrono::Utc::now()
+        .signed_duration_since(created_at.with_timezone(&chrono::Utc))
+        .num_seconds();
+
+    Ok(age.max(0) as f64)
 }

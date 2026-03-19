@@ -6,12 +6,17 @@ use sha2::{Digest, Sha256};
 
 mod backend;
 mod client;
+mod metrics;
 mod proto;
 mod relayer;
 
 // Re-export public types from modules
-pub use backend::{Backend, BackendConfig, BackendState};
-pub use relayer::{balances_equal, Relayer, RelayerConfig};
+pub use backend::{
+    oldest_pending_request_age_seconds, Backend, BackendConfig, BackendState,
+    PendingRequestMetricsSnapshot,
+};
+pub use metrics::{init_metrics_exporter, metrics_enabled, render_metrics};
+pub use relayer::{balances_equal, parse_metric_amount, Relayer, RelayerConfig};
 
 /// Forwarding relayer CLI
 #[derive(Parser, Debug)]
@@ -101,12 +106,12 @@ pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
         .context("Failed to parse derivation path")?;
 
     // Derive the extended private key
-    let xprv = XPrv::derive_from_path(&seed, &path).context("Failed to derive key from path")?;
+    let xprv = XPrv::derive_from_path(seed, &path).context("Failed to derive key from path")?;
 
     // Get the raw private key bytes (32 bytes)
     let private_key_bytes = xprv.to_bytes();
 
-    Ok(hex::encode(&private_key_bytes))
+    Ok(hex::encode(private_key_bytes))
 }
 
 /// Derive a forwarding address from dest_domain and dest_recipient

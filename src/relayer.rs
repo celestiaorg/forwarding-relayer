@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use metrics::{counter, gauge};
 use reqwest::Client as HttpClient;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -41,6 +42,10 @@ pub struct RelayerConfig {
     /// IGP fee buffer multiplier (e.g., 1.1 for 10% buffer)
     #[arg(long, env = "IGP_FEE_BUFFER", default_value = "1.1")]
     pub igp_fee_buffer: f64,
+
+    /// Metrics port for Prometheus scraping
+    #[arg(long, env = "RELAYER_METRICS_PORT")]
+    pub metrics_port: Option<u16>,
 }
 
 /// Relayer state
@@ -134,8 +139,14 @@ impl Relayer {
         let poll_interval = Duration::from_secs(self.config.poll_interval);
 
         loop {
-            if let Err(e) = self.process_round().await {
-                error!("Error in relayer round: {:#}", e);
+            match self.process_round().await {
+                Ok(()) => {
+                    counter!("relayer_rounds_total", "status" => "ok").increment(1);
+                }
+                Err(e) => {
+                    counter!("relayer_rounds_total", "status" => "error").increment(1);
+                    error!("Error in relayer round: {:#}", e);
+                }
             }
 
             tokio::time::sleep(poll_interval).await;
@@ -144,10 +155,18 @@ impl Relayer {
 
     /// Process one round of forwarding
     async fn process_round(&mut self) -> Result<()> {
+        self.refresh_signer_balance_metrics().await?;
+
         // Fetch forwarding requests from backend
         let requests = match self.fetch_forwarding_requests().await {
-            Ok(reqs) => reqs,
+            Ok(reqs) => {
+                counter!("backend_request_fetch_total", "status" => "success").increment(1);
+                gauge!("forwarding_requests_fetched").set(reqs.len() as f64);
+                reqs
+            }
             Err(e) => {
+                counter!("backend_request_fetch_total", "status" => "failure").increment(1);
+                gauge!("forwarding_requests_fetched").set(0.0);
                 warn!("Failed to fetch forwarding requests from backend: {:#}", e);
                 // Continue with empty list if backend is unavailable
                 Vec::new()
@@ -172,6 +191,7 @@ impl Relayer {
     /// Process a single forwarding request
     async fn process_forwarding_request(&mut self, request: &ForwardingRequest) -> Result<()> {
         let forward_addr = &request.forward_addr;
+        let dest_domain = request.dest_domain.to_string();
 
         debug!("Checking balance at {}", forward_addr);
 
@@ -179,6 +199,12 @@ impl Relayer {
         let balances = self.celestia.query_balances(forward_addr).await?;
 
         if balances.is_empty() {
+            counter!(
+                "forwarding_requests_processed_total",
+                "status" => "empty_balance",
+                "dest_domain" => dest_domain.clone()
+            )
+            .increment(1);
             debug!("No balance at {}", forward_addr);
             return Ok(());
         }
@@ -190,6 +216,10 @@ impl Relayer {
 
         // Query IGP fee and apply buffer
         let quoted_fee = self.celestia.query_igp_fee(request.dest_domain).await?;
+        if let Some(quoted_fee_value) = parse_metric_amount(&quoted_fee) {
+            gauge!("igp_fee_quote_utia", "dest_domain" => dest_domain.clone())
+                .set(quoted_fee_value);
+        }
         let quoted_fee_f64: f64 = quoted_fee.parse().context("Failed to parse IGP fee")?;
         let max_fee = (quoted_fee_f64 * self.config.igp_fee_buffer) as u64;
         let max_igp_fee = format!("{}utia", max_fee);
@@ -211,6 +241,18 @@ impl Relayer {
             .await
         {
             Ok(tx_hash) => {
+                counter!(
+                    "forwarding_tx_submissions_total",
+                    "status" => "success",
+                    "dest_domain" => dest_domain.clone()
+                )
+                .increment(1);
+                counter!(
+                    "forwarding_requests_processed_total",
+                    "status" => "submitted",
+                    "dest_domain" => dest_domain
+                )
+                .increment(1);
                 info!("Forwarding successful: tx_hash={}", tx_hash);
 
                 if let Err(e) = self.complete_request(forward_addr).await {
@@ -221,11 +263,46 @@ impl Relayer {
                 }
             }
             Err(e) => {
+                counter!(
+                    "forwarding_tx_submissions_total",
+                    "status" => "failure",
+                    "dest_domain" => dest_domain.clone()
+                )
+                .increment(1);
+                counter!(
+                    "forwarding_requests_processed_total",
+                    "status" => "submit_failed",
+                    "dest_domain" => dest_domain
+                )
+                .increment(1);
                 error!("Failed to submit forwarding for {}: {:#}", forward_addr, e);
             }
         }
 
         Ok(())
     }
+
+    async fn refresh_signer_balance_metrics(&mut self) -> Result<()> {
+        let signer_address = self.celestia.signer_address().to_string();
+        let balances = self.celestia.query_balances(&signer_address).await?;
+        let utia_balance = balances
+            .into_iter()
+            .find(|balance| balance.denom == "utia")
+            .and_then(|balance| parse_metric_amount(&balance.amount))
+            .unwrap_or(0.0);
+
+        gauge!("signer_balance", "denom" => "utia").set(utia_balance);
+
+        Ok(())
+    }
 }
 
+pub fn parse_metric_amount(value: &str) -> Option<f64> {
+    match value.parse::<f64>() {
+        Ok(parsed) => Some(parsed),
+        Err(err) => {
+            warn!("Failed to parse metric amount '{value}': {err}");
+            None
+        }
+    }
+}

@@ -127,10 +127,7 @@ impl CelestiaClient {
                 Ok("0".to_string())
             }
             Err(_) => {
-                warn!(
-                    "IGP fee query timed out for domain {}",
-                    dest_domain
-                );
+                warn!("IGP fee query timed out for domain {}", dest_domain);
                 Ok("0".to_string())
             }
         }
