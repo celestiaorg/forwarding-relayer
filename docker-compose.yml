@@ -107,9 +107,11 @@ services:
     container_name: forwarding-backend
     ports:
       - "8080:8080"
+      - "9091:9091"
     environment:
       - PORT=8080
       - DB_PATH=/app/storage/backend.db
+      - BACKEND_METRICS_PORT=9091
     volumes:
       - forwarding-backend-data:/app/storage
     command: ["backend"]
@@ -128,12 +130,15 @@ services:
   forwarding-relayer:
     image: forwarding-relayer:local
     container_name: forwarding-relayer
+    ports:
+      - "9092:9092"
     environment:
       - CELESTIA_GRPC=http://celestia-validator:9090
       - BACKEND_URL=http://forwarding-backend:8080
       - PRIVATE_KEY_HEX=6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c
       - POLL_INTERVAL=6
       - IGP_FEE_BUFFER=1.1
+      - RELAYER_METRICS_PORT=9092
     volumes:
       - forwarding-relayer-data:/app/storage
     command: ["relayer"]
@@ -157,6 +162,43 @@ services:
     depends_on:
       hyperlane-init:
         condition: service_completed_successfully
+    networks:
+      - celestia-zkevm-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9095:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    depends_on:
+      forwarding-backend:
+        condition: service_healthy
+      forwarding-relayer:
+        condition: service_started
+    networks:
+      - celestia-zkevm-net
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./monitoring/grafana/provisioning/datasources/prometheus.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - ./monitoring/grafana/provisioning/dashboards/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_started
     networks:
       - celestia-zkevm-net
 
