@@ -18,6 +18,13 @@ npm install -g @hyperlane-xyz/cli
 docker compose up
 ```
 
+To also start Prometheus and Grafana for local metrics dashboards, enable the optional
+`monitoring` profile:
+
+```
+docker compose --profile monitoring up
+```
+
 ### Deploy EVM core and warp route contracts
 
 1. Configure an env variable `HYP_KEY` for tx signing.

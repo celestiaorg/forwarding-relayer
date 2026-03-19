@@ -72,6 +72,16 @@ make start
 
 Wait for `hyperlane-init` to exit with code 0 (`docker ps` to check).
 
+To also start Prometheus and Grafana for local metrics testing, enable the optional `monitoring`
+profile:
+
+```bash
+docker compose --profile monitoring up --detach
+```
+
+Prometheus will be available at `http://localhost:9095` and Grafana at `http://localhost:3000`
+with `admin` / `admin`.
+
 ### 2. Fund the relayer account
 
 The relayer needs gas for `MsgForward` transactions:
@@ -155,4 +165,10 @@ make derive-address     Derive forwarding address for Anvil
 make transfer           Direct Hyperlane warp transfer (no forwarding)
 make send-to-address    Send utia to a Celestia address
 make query-balance      Query wTIA balance on Anvil
+```
+
+To include Prometheus and Grafana when starting the stack manually, use:
+
+```bash
+docker compose --profile monitoring up --detach
 ```
