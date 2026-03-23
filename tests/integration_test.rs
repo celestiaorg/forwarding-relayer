@@ -127,8 +127,7 @@ async fn test_idempotent_create() {
         dest_domain: 42161,
         dest_recipient: "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000"
             .to_string(),
-        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131"
-            .to_string(),
+        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131".to_string(),
     };
 
     // First POST - should create
@@ -142,7 +141,10 @@ async fn test_idempotent_create() {
     assert_eq!(response.status(), 201); // Created
     let created: ForwardingRequest = response.json().await.unwrap();
     assert_eq!(created.forward_addr, "celestia1test1");
-    assert_eq!(created.token_id, "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131");
+    assert_eq!(
+        created.token_id,
+        "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131"
+    );
 
     // Second POST for the same address - should return existing
     let response2 = client
@@ -265,8 +267,7 @@ async fn test_backend_metrics_endpoint() {
         dest_domain: 1234,
         dest_recipient: "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
             .to_string(),
-        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131"
-            .to_string(),
+        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131".to_string(),
     };
 
     let response = client

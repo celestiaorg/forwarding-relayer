@@ -26,7 +26,10 @@ fn test_derive_forwarding_address_different_token_ids() {
     let address_a = derive_forwarding_address(dest_domain, dest_recipient, token_id_a).unwrap();
     let address_b = derive_forwarding_address(dest_domain, dest_recipient, token_id_b).unwrap();
 
-    assert_ne!(address_a, address_b, "Different token_ids must produce different forwarding addresses");
+    assert_ne!(
+        address_a, address_b,
+        "Different token_ids must produce different forwarding addresses"
+    );
 }
 
 #[test]
@@ -58,8 +61,12 @@ fn test_derive_forwarding_address_test_vectors() {
     ];
 
     for (name, dest_domain, dest_recipient, token_id, expected_bech32) in test_vectors {
-        let address = derive_forwarding_address(dest_domain, &format!("0x{}", dest_recipient), &format!("0x{}", token_id))
-            .unwrap_or_else(|e| panic!("{}: derivation failed: {}", name, e));
+        let address = derive_forwarding_address(
+            dest_domain,
+            &format!("0x{}", dest_recipient),
+            &format!("0x{}", token_id),
+        )
+        .unwrap_or_else(|e| panic!("{}: derivation failed: {}", name, e));
         assert_eq!(address, expected_bech32, "test vector {} failed", name);
     }
 }

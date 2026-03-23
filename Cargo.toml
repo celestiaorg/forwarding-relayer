@@ -1,10 +1,10 @@
-[workspace]
-members = [".", "e2e"]
 
 [package]
 name = "forwarding-relayer"
 version = "0.1.0"
 edition = "2021"
+[workspace]
+members = [".", "e2e"]
 
 [dependencies]
 anyhow = "1.0"
@@ -12,10 +12,10 @@ axum = "0.7"
 bech32 = "0.11"
 bip32 = "0.5"
 bip39 = "2.1"
-chrono = "0.4"
-clap = { version = "4.5", features = ["derive", "env"] }
 celestia-grpc = { git = "https://github.com/celestiaorg/lumina.git", rev = "7d35441b56268ddad3d964240bc25482518f28f9" }
 celestia-proto = { git = "https://github.com/celestiaorg/lumina.git", rev = "7d35441b56268ddad3d964240bc25482518f28f9", features = ["tonic"] }
+chrono = "0.4"
+clap = { version = "4.5", features = ["derive", "env"] }
 cosmrs = { version = "0.19", features = ["cosmwasm", "rpc", "grpc"] }
 hex = "0.4"
 metrics = "0.24"
@@ -23,6 +23,7 @@ metrics-exporter-prometheus = "0.18"
 prost = "0.13"
 prost-types = "0.13"
 reqwest = { version = "0.12", features = ["json"] }
+rusqlite = { version = "0.38.0", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
@@ -31,4 +32,3 @@ tonic = "0.13"
 tower = "0.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rusqlite = { version = "0.38.0", features = ["bundled"] }

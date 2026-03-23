@@ -149,8 +149,7 @@ pub fn derive_forwarding_address(
 
     // Parse token_id as hex (with or without 0x prefix)
     let token_id_hex = token_id.trim_start_matches("0x");
-    let token_id_bytes =
-        hex::decode(token_id_hex).context("Failed to decode token_id as hex")?;
+    let token_id_bytes = hex::decode(token_id_hex).context("Failed to decode token_id as hex")?;
 
     // Step 1: Encode dest_domain as 32-byte big-endian (right-aligned at offset 28)
     let mut domain_bytes = [0u8; 32];
