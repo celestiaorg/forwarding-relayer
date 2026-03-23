@@ -42,6 +42,10 @@ struct Args {
     /// Destination Hyperlane domain
     #[arg(long, default_value = "1234")]
     dest_domain: u32,
+
+    /// Token ID (hex-encoded)
+    #[arg(long, env = "TOKEN_ID")]
+    token_id: String,
 }
 
 #[tokio::main]
@@ -78,7 +82,7 @@ async fn main() -> Result<()> {
 
     // Derive forwarding address
     let forward_addr =
-        forwarding_relayer::derive_forwarding_address(args.dest_domain, &dest_recipient)?;
+        forwarding_relayer::derive_forwarding_address(args.dest_domain, &dest_recipient, &args.token_id)?;
     info!("Forwarding address: {}", forward_addr);
 
     // === Step 1: Verify services ===
@@ -103,6 +107,7 @@ async fn main() -> Result<()> {
         forward_addr: forward_addr.clone(),
         dest_domain: args.dest_domain,
         dest_recipient: dest_recipient.clone(),
+        token_id: args.token_id.clone(),
     };
 
     let resp = http_client

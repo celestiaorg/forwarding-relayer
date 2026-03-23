@@ -215,7 +215,7 @@ impl Relayer {
         }
 
         // Query IGP fee and apply buffer
-        let quoted_fee = self.celestia.query_igp_fee(request.dest_domain).await?;
+        let quoted_fee = self.celestia.query_igp_fee(request.dest_domain, &request.token_id).await?;
         if let Some(quoted_fee_value) = parse_metric_amount(&quoted_fee) {
             gauge!("igp_fee_quote_utia", "dest_domain" => dest_domain.clone())
                 .set(quoted_fee_value);
@@ -236,6 +236,7 @@ impl Relayer {
                 forward_addr,
                 request.dest_domain,
                 &request.dest_recipient,
+                &request.token_id,
                 &max_igp_fee,
             )
             .await

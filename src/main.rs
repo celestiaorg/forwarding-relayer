@@ -31,10 +31,11 @@ async fn main() -> Result<()> {
         Command::DeriveAddress {
             dest_domain,
             dest_recipient,
+            token_id,
         } => {
             // Derive forwarding address
             let address =
-                forwarding_relayer::derive_forwarding_address(dest_domain, &dest_recipient)?;
+                forwarding_relayer::derive_forwarding_address(dest_domain, &dest_recipient, &token_id)?;
             println!("{}", address);
             Ok(())
         }

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:patch-diff.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(cargo build:*)",
+      "Bash(cargo test:*)",
+      "Bash(gh api:*)",
+      "Bash(curl -sL \"https://github.com/celestiaorg/celestia-app/pull/6906.diff\")",
+      "WebFetch(domain:raw.githubusercontent.com)"
+    ]
+  }
+}
