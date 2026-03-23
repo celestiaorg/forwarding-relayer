@@ -59,10 +59,10 @@ hyperlane core deploy --chain rethlocal --registry ./registry --yes
 
 5. Create synthetic token on Reth.
 
-NOTE: Here we must specify the `--config` flag to the warp router deployment config.
+NOTE: The warp deploy config must be placed in the registry at `deployments/warp_routes/TIA/rethlocal-deploy.yaml`.
 
 ```
-hyperlane warp deploy --config ./configs/warp-config.yaml --registry ./registry --yes
+hyperlane warp deploy --warp-route-id TIA/rethlocal --registry ./registry --yes
 ```
 
 ### Deploy Cosmosnative core and warp route on Celestia

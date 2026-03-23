@@ -50,7 +50,7 @@ impl CelestiaClient {
         let channel = endpoint.connect_lazy();
 
         let tx_client = GrpcClient::builder()
-            .transport(channel.clone())
+            .url(&grpc_url)
             .private_key_hex(private_key_hex.as_str())
             .build()
             .context("Failed to initialize Celestia gRPC tx client")?;

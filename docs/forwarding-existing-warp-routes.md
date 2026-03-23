@@ -151,7 +151,7 @@ Check the wTIA balance on Anvil:
 
 ```bash
 # Find the warp token address
-WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/warp-config-config.yaml | awk '{print $NF}' | tr -d '"')
+WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml | awk '{print $NF}' | tr -d '"')
 
 # Query balance
 cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xYOUR_EVM_ADDRESS --rpc-url http://localhost:8545

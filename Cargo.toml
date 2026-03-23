@@ -14,8 +14,8 @@ bip32 = "0.5"
 bip39 = "2.1"
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive", "env"] }
-celestia-grpc = "0.12"
-celestia-proto = { version = "0.12.1", features = ["tonic"] }
+celestia-grpc = { git = "https://github.com/celestiaorg/lumina.git", rev = "7d35441b56268ddad3d964240bc25482518f28f9" }
+celestia-proto = { git = "https://github.com/celestiaorg/lumina.git", rev = "7d35441b56268ddad3d964240bc25482518f28f9", features = ["tonic"] }
 cosmrs = { version = "0.19", features = ["cosmwasm", "rpc", "grpc"] }
 hex = "0.4"
 metrics = "0.24"

@@ -130,7 +130,7 @@ RUST_LOG=info ./target/release/forwarding-relayer relayer \
 make send-to-address ADDR=<forwarding address> AMOUNT=1000000
 
 # After ~30s, check wTIA balance on Anvil
-WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/warp-config-config.yaml | awk '{print $NF}' | tr -d '"')
+WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml | awk '{print $NF}' | tr -d '"')
 cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --rpc-url http://localhost:8545
 ```
 
