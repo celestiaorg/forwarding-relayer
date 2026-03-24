@@ -32,7 +32,7 @@ sequenceDiagram
     participant Celestia
     participant Dest as Destination Chain
 
-    Frontend->>Frontend: forwardAddr = derive(destDomain, destRecipient)
+    Frontend->>Frontend: forwardAddr = derive(destDomain, destRecipient, tokenId)
     Frontend->>Backend: POST /forwarding-requests
     Frontend->>User: Display deposit address
     User->>Celestia: Send tokens to forwardAddr
@@ -70,17 +70,18 @@ message MsgForward {
   string forward_addr = 2;     // bech32 forwarding address
   uint32 dest_domain = 3;      // Hyperlane destination domain ID
   string dest_recipient = 4;   // 32-byte recipient (hex-encoded, 0x-prefixed)
-  Coin max_igp_fee = 5;        // Max IGP fee relayer will pay per token
+  string token_id = 5;         // Hyperlane warp route token identifier
+  Coin max_igp_fee = 6;        // Max IGP fee relayer will pay
 }
 ```
 
-**Important**: This message forwards ALL tokens at `forward_addr`. There is no token-specific parameter.
+The forwarding address is derived from `(destDomain, destRecipient, tokenId)`, binding each address to a specific warp route token.
 
 ### IGP Fee Handling
 
 The relayer pays Hyperlane IGP fees for cross-chain message delivery:
 
-1. **Query fee estimate** before submitting: `QuoteForwardingFee` returns the current IGP fee
+1. **Query fee estimate** before submitting: `QuoteForwardingFee(dest_domain, token_id)` returns the current IGP fee
 2. **Set max_igp_fee** with a buffer (e.g., +10%) to handle price fluctuations
 3. **Per-token charging**: Each token forwarded charges its own IGP fee (up to max_igp_fee)
 4. **Only actual fee charged**: If quoted fee < max_igp_fee, only the quoted amount is taken
@@ -134,7 +135,9 @@ See the canonical derivation algorithm in [README.md](./README.md#address-deriva
 
 - `destDomain`: uint32 encoded as 32-byte big-endian (right-aligned)
 - `destRecipient`: exactly 32 bytes
+- `tokenId`: Hyperlane warp route token identifier (hex-encoded)
 - Output: bech32 address with `celestia` prefix
+- Different `tokenId` values produce different forwarding addresses for the same domain/recipient
 
 ### Recipient Address Formatting
 
@@ -164,13 +167,14 @@ MAIN LOOP (every ~6 seconds):
 
     if balance > 0:
       # Query current IGP fee and add buffer
-      quoted_fee = query QuoteForwardingFee(request.dest_domain)
+      quoted_fee = query QuoteForwardingFee(request.dest_domain, request.token_id)
       max_fee = quoted_fee * 1.1  # 10% buffer for price changes
 
       result = submit MsgForward(
         forward_addr = request.forward_addr,
         dest_domain = request.dest_domain,
         dest_recipient = request.dest_recipient,
+        token_id = request.token_id,
         max_igp_fee = max_fee
       )
 
@@ -195,7 +199,7 @@ MAIN LOOP (every ~6 seconds):
 | Insufficient IGP fee | Unchanged | Re-query `QuoteForwardingFee`, retry with higher fee |
 | IGP fee denom mismatch | Unchanged | Ensure max_igp_fee uses correct denom (usually utia) |
 
-**Key insight**: Since forwarding is permissionless, funds are never at risk. Anyone with the correct `(destDomain, destRecipient)` can trigger forwarding.
+**Key insight**: Since forwarding is permissionless, funds are never at risk. Anyone with the correct `(destDomain, destRecipient, tokenId)` can trigger forwarding.
 
 **IGP fee note**: If warp transfer fails after IGP fee collection, the fee is consumed (not returned). This incentivizes relayers to verify routes exist before submitting.
 
@@ -223,6 +227,7 @@ Response 200:
     "forward_addr": "celestia1abc...",
     "dest_domain": 42161,
     "dest_recipient": "0x000000000000000000000000742d35cc6634c0532925a3b844bc9e7595f00000",
+    "token_id": "0x726f757465725f61707000000000000000000000000000010000000000000000",
     "status": "pending",
     "created_at": "2024-01-15T10:30:00Z"
   }
@@ -239,6 +244,7 @@ Response 200:
   "forward_addr": "celestia1abc...",
   "dest_domain": 42161,
   "dest_recipient": "0x000000000000000000000000742d35cc6634c0532925a3b844bc9e7595f00000",
+  "token_id": "0x726f757465725f61707000000000000000000000000000010000000000000000",
   "status": "pending",
   "created_at": "2024-01-15T10:30:00Z"
 }
@@ -256,7 +262,8 @@ Content-Type: application/json
 {
   "forward_addr": "celestia1abc...",
   "dest_domain": 42161,
-  "dest_recipient": "0x000000000000000000000000742d35cc6634c0532925a3b844bc9e7595f00000"
+  "dest_recipient": "0x000000000000000000000000742d35cc6634c0532925a3b844bc9e7595f00000",
+  "token_id": "0x726f757465725f61707000000000000000000000000000010000000000000000"
 }
 
 Response 201:
@@ -293,12 +300,16 @@ Response 200:
 ## CLI Commands for Testing
 
 ```bash
-# Query derived address
-celestia-appd query forwarding derive-address 42161 \
+# Query derived address (token_id, dest_domain, dest_recipient)
+celestia-appd query forwarding derive-address \
+  0x726f757465725f61707000000000000000000000000000010000000000000000 \
+  42161 \
   0x000000000000000000000000742d35cc6634c0532925a3b844bc9e7595f00000
 
-# Query IGP fee estimate for destination
-celestia-appd query forwarding quote-fee 42161
+# Query IGP fee estimate for destination and token
+celestia-appd query forwarding quote-fee \
+  0x726f757465725f61707000000000000000000000000000010000000000000000 \
+  42161
 
 # Check balance at forwarding address
 celestia-appd query bank balances celestia1<forward_addr>
@@ -309,6 +320,7 @@ celestia-appd tx forwarding forward \
   celestia1<forward_addr> \
   42161 \
   0x000000000000000000000000742d35cc6634c0532925a3b844bc9e7595f00000 \
+  0x726f757465725f61707000000000000000000000000000010000000000000000 \
   --max-igp-fee 1000utia \
   --from mykey --chain-id celestia -y
 
@@ -332,6 +344,6 @@ celestia-appd query tx <txhash> --output json | jq '.events'
 ## Security Considerations
 
 1. **No key management for user funds** - Relayer only needs its own signing key for gas
-2. **Derivation verification** - On-chain module verifies `derive(destDomain, destRecipient) == forwardAddr`
+2. **Derivation verification** - On-chain module verifies `derive(destDomain, destRecipient, tokenId) == forwardAddr`
 3. **Idempotent execution** - Submitting same forwarding twice is safe (second will have no balance)
 4. **Backend trust** - Relayer trusts Backend for forwarding request data, but on-chain verification prevents misdirection

@@ -59,7 +59,7 @@ SUCCESS! 1000000 utia forwarded from Celestia to Anvil as wTIA
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- `ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0` Docker image
+- `celestia-app-standalone:local` Docker image (see docker-compose.yml)
 
 ## Manual Step-by-Step
 
@@ -101,8 +101,8 @@ docker exec celestia-validator celestia-appd tx bank send \
 ### 4. Register a forwarding request
 
 ```bash
-# Derive the forwarding address
-make derive-address
+# Derive the forwarding address (TOKEN_ID from Hyperlane deployment)
+make derive-address TOKEN_ID=0x...
 
 # Create the request
 curl -X POST http://localhost:8080/forwarding-requests \
@@ -110,7 +110,8 @@ curl -X POST http://localhost:8080/forwarding-requests \
   -d '{
     "forward_addr": "<address from derive-address>",
     "dest_domain": 1234,
-    "dest_recipient": "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+    "dest_recipient": "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    "token_id": "0x..."
   }'
 ```
 
