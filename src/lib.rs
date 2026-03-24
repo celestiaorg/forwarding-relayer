@@ -41,6 +41,9 @@ pub enum Command {
         /// Destination recipient address (32-byte hex, e.g., 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266)
         #[arg(long)]
         dest_recipient: String,
+        /// Token ID (hex-encoded, e.g., 0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131)
+        #[arg(long)]
+        token_id: String,
     },
     /// Derive a private key from a mnemonic
     DerivePrivateKey {
@@ -56,6 +59,7 @@ pub struct ForwardingRequest {
     pub forward_addr: String,
     pub dest_domain: u32,
     pub dest_recipient: String,
+    pub token_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
 }
@@ -66,6 +70,7 @@ pub struct CreateForwardingRequest {
     pub forward_addr: String,
     pub dest_domain: u32,
     pub dest_recipient: String,
+    pub token_id: String,
 }
 
 /// Token balance
@@ -114,10 +119,10 @@ pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
     Ok(hex::encode(private_key_bytes))
 }
 
-/// Derive a forwarding address from dest_domain and dest_recipient
+/// Derive a forwarding address from dest_domain, dest_recipient, and token_id
 ///
 /// Algorithm from celestia-app/x/forwarding/types/address.go:
-/// 1. callDigest = sha256(destDomain_32bytes || destRecipient)
+/// 1. callDigest = sha256(destDomain_32bytes || destRecipient || tokenID)
 /// 2. salt = sha256(ForwardVersion || callDigest)
 /// 3. address = address.Module("forwarding", salt)[:20]
 /// 4. Encode as bech32 with "celestia" prefix
@@ -125,7 +130,11 @@ pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
 /// Where address.Module(name, key) is:
 ///   th = sha256(typ)
 ///   sha256(th || name || 0x00 || key)
-pub fn derive_forwarding_address(dest_domain: u32, dest_recipient: &str) -> Result<String> {
+pub fn derive_forwarding_address(
+    dest_domain: u32,
+    dest_recipient: &str,
+    token_id: &str,
+) -> Result<String> {
     // Parse dest_recipient as hex (with or without 0x prefix)
     let recipient_hex = dest_recipient.trim_start_matches("0x");
     let recipient_bytes =
@@ -138,14 +147,19 @@ pub fn derive_forwarding_address(dest_domain: u32, dest_recipient: &str) -> Resu
         );
     }
 
+    // Parse token_id as hex (with or without 0x prefix)
+    let token_id_hex = token_id.trim_start_matches("0x");
+    let token_id_bytes = hex::decode(token_id_hex).context("Failed to decode token_id as hex")?;
+
     // Step 1: Encode dest_domain as 32-byte big-endian (right-aligned at offset 28)
     let mut domain_bytes = [0u8; 32];
     domain_bytes[28..32].copy_from_slice(&dest_domain.to_be_bytes());
 
-    // Step 2: callDigest = sha256(destDomain_32bytes || destRecipient)
+    // Step 2: callDigest = sha256(destDomain_32bytes || destRecipient || tokenID)
     let mut hasher = Sha256::new();
     hasher.update(domain_bytes);
     hasher.update(&recipient_bytes);
+    hasher.update(&token_id_bytes);
     let call_digest = hasher.finalize();
 
     // Step 3: salt = sha256(ForwardVersion || callDigest)

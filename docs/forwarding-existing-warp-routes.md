@@ -45,11 +45,11 @@ docker inspect hyperlane-init --format='{{.State.ExitCode}}'
 
 ## Step 3: Derive a Forwarding Address
 
-Each (destination domain, recipient) pair maps to a unique forwarding address on Celestia. Derive it with:
+Each (destination domain, recipient, token ID) tuple maps to a unique forwarding address on Celestia. Derive it with:
 
 ```bash
 # Using the Makefile (defaults to domain 1234, Anvil account[0])
-make derive-address
+make derive-address TOKEN_ID=0x...
 ```
 
 Or with the relayer binary for a custom recipient:
@@ -57,10 +57,12 @@ Or with the relayer binary for a custom recipient:
 ```bash
 ./target/release/forwarding-relayer derive-address \
   --dest-domain 1234 \
-  --dest-recipient 0x000000000000000000000000YOUR_EVM_ADDRESS_HERE
+  --dest-recipient 0x000000000000000000000000YOUR_EVM_ADDRESS_HERE \
+  --token-id 0x...
 ```
 
-The `dest-recipient` must be a 32-byte hex-encoded address (pad a 20-byte EVM address with 12 leading zero bytes).
+- `dest-recipient` must be a 32-byte hex-encoded address (pad a 20-byte EVM address with 12 leading zero bytes).
+- `token-id` is the Hyperlane warp route token identifier (hex-encoded). Different token IDs produce different forwarding addresses.
 
 Save the output address; you'll need it in the next steps.
 
@@ -84,7 +86,8 @@ curl -X POST http://localhost:8080/forwarding-requests \
   -d '{
     "forward_addr": "celestia1...",
     "dest_domain": 1234,
-    "dest_recipient": "0x000000000000000000000000YOUR_EVM_ADDRESS_HERE"
+    "dest_recipient": "0x000000000000000000000000YOUR_EVM_ADDRESS_HERE",
+    "token_id": "0x..."
   }'
 ```
 
@@ -151,7 +154,7 @@ Check the wTIA balance on Anvil:
 
 ```bash
 # Find the warp token address
-WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/warp-config-config.yaml | awk '{print $NF}' | tr -d '"')
+WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml | awk '{print $NF}' | tr -d '"')
 
 # Query balance
 cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xYOUR_EVM_ADDRESS --rpc-url http://localhost:8545
@@ -171,7 +174,7 @@ You can send tokens to the same forwarding address multiple times. Each deposit 
 
 ## Forwarding to Different Recipients
 
-Each recipient needs their own forwarding address. Repeat steps 3-5 for each new `(dest_domain, dest_recipient)` pair:
+Each recipient/token combination needs its own forwarding address. Repeat steps 3-5 for each new `(dest_domain, dest_recipient, token_id)` tuple:
 
 1. Derive a new forwarding address
 2. Register it with the backend

@@ -50,7 +50,7 @@ impl CelestiaClient {
         let channel = endpoint.connect_lazy();
 
         let tx_client = GrpcClient::builder()
-            .transport(channel.clone())
+            .url(&grpc_url)
             .private_key_hex(private_key_hex.as_str())
             .build()
             .context("Failed to initialize Celestia gRPC tx client")?;
@@ -104,12 +104,15 @@ impl CelestiaClient {
             .collect())
     }
 
-    /// Query IGP fee quote for a destination domain via forwarding module gRPC query
-    pub(crate) async fn query_igp_fee(&self, dest_domain: u32) -> Result<String> {
+    /// Query IGP fee quote for a destination domain and token via forwarding module gRPC query
+    pub(crate) async fn query_igp_fee(&self, dest_domain: u32, token_id: &str) -> Result<String> {
         let mut client = ForwardingQueryClient::new(self.channel.clone());
         let response = tokio::time::timeout(
             GRPC_QUERY_TIMEOUT,
-            client.quote_forwarding_fee(QueryQuoteForwardingFeeRequest { dest_domain }),
+            client.quote_forwarding_fee(QueryQuoteForwardingFeeRequest {
+                dest_domain,
+                token_id: token_id.to_string(),
+            }),
         )
         .await;
 
@@ -121,13 +124,16 @@ impl CelestiaClient {
                 .unwrap_or_else(|| "0".to_string())),
             Ok(Err(err)) => {
                 warn!(
-                    "Failed to query IGP fee for domain {} via forwarding gRPC query: {}",
-                    dest_domain, err
+                    "Failed to query IGP fee for domain {} token {} via forwarding gRPC query: {}",
+                    dest_domain, token_id, err
                 );
                 Ok("0".to_string())
             }
             Err(_) => {
-                warn!("IGP fee query timed out for domain {}", dest_domain);
+                warn!(
+                    "IGP fee query timed out for domain {} token {}",
+                    dest_domain, token_id
+                );
                 Ok("0".to_string())
             }
         }
@@ -144,11 +150,12 @@ impl CelestiaClient {
         forward_addr: &str,
         dest_domain: u32,
         dest_recipient: &str,
+        token_id: &str,
         max_igp_fee: &str,
     ) -> Result<String> {
         info!(
-            "Submitting forward: addr={}, domain={}, recipient={}, max_fee={}",
-            forward_addr, dest_domain, dest_recipient, max_igp_fee
+            "Submitting forward: addr={}, domain={}, recipient={}, token_id={}, max_fee={}",
+            forward_addr, dest_domain, dest_recipient, token_id, max_igp_fee
         );
 
         // Parse max_igp_fee (e.g., "1100utia")
@@ -166,6 +173,7 @@ impl CelestiaClient {
             forward_addr: forward_addr.to_string(),
             dest_domain,
             dest_recipient: dest_recipient.to_string(),
+            token_id: token_id.to_string(),
             max_igp_fee: Some(Coin {
                 denom: fee_denom.to_string(),
                 amount: fee_amount.to_string(),

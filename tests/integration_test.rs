@@ -29,12 +29,14 @@ async fn test_backend_api() {
     // Add a test request
     let dest_domain = 42161;
     let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
-    let forward_addr = derive_forwarding_address(dest_domain, dest_recipient).unwrap();
+    let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
+    let forward_addr = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
 
     let request = ForwardingRequest {
         forward_addr: forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
+        token_id: token_id.to_string(),
         created_at: None,
     };
 
@@ -63,6 +65,7 @@ async fn test_backend_api() {
     let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].forward_addr, forward_addr);
+    assert_eq!(requests[0].token_id, token_id);
 
     // Test DELETE /forwarding-requests/{addr} - mark as completed
     let response = client
@@ -89,8 +92,9 @@ fn test_derive_forwarding_address() {
     // Test address derivation
     let dest_domain = 42161;
     let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
+    let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
 
-    let address = derive_forwarding_address(dest_domain, dest_recipient).unwrap();
+    let address = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
 
     // Should be a valid bech32 address with celestia prefix
     assert!(address.starts_with("celestia1"));
@@ -123,6 +127,7 @@ async fn test_idempotent_create() {
         dest_domain: 42161,
         dest_recipient: "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000"
             .to_string(),
+        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131".to_string(),
     };
 
     // First POST - should create
@@ -136,6 +141,10 @@ async fn test_idempotent_create() {
     assert_eq!(response.status(), 201); // Created
     let created: ForwardingRequest = response.json().await.unwrap();
     assert_eq!(created.forward_addr, "celestia1test1");
+    assert_eq!(
+        created.token_id,
+        "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131"
+    );
 
     // Second POST for the same address - should return existing
     let response2 = client
@@ -258,6 +267,7 @@ async fn test_backend_metrics_endpoint() {
         dest_domain: 1234,
         dest_recipient: "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
             .to_string(),
+        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131".to_string(),
     };
 
     let response = client

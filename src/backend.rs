@@ -65,6 +65,7 @@ impl BackendStorage {
                 forward_addr   TEXT PRIMARY KEY,
                 dest_domain    INTEGER NOT NULL,
                 dest_recipient TEXT NOT NULL,
+                token_id       TEXT NOT NULL,
                 created_at     TEXT
             )",
             [],
@@ -89,12 +90,13 @@ impl BackendStorage {
         let created_at = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT OR IGNORE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, token_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 &create_req.forward_addr,
                 &create_req.dest_domain,
                 &create_req.dest_recipient,
+                &create_req.token_id,
                 &created_at
             ],
         )
@@ -111,12 +113,13 @@ impl BackendStorage {
                 forward_addr: create_req.forward_addr,
                 dest_domain: create_req.dest_domain,
                 dest_recipient: create_req.dest_recipient,
+                token_id: create_req.token_id,
                 created_at: Some(created_at),
             }
         } else {
             let mut stmt = conn
                 .prepare(
-                    "SELECT forward_addr, dest_domain, dest_recipient, created_at
+                    "SELECT forward_addr, dest_domain, dest_recipient, token_id, created_at
                      FROM forwarding_requests WHERE forward_addr = ?1",
                 )
                 .context("Failed to prepare SELECT statement")?;
@@ -127,7 +130,8 @@ impl BackendStorage {
                         forward_addr: row.get(0)?,
                         dest_domain: row.get(1)?,
                         dest_recipient: row.get(2)?,
-                        created_at: row.get(3)?,
+                        token_id: row.get(3)?,
+                        created_at: row.get(4)?,
                     })
                 })
                 .context("Failed to query existing request")?;
@@ -146,12 +150,13 @@ impl BackendStorage {
     pub fn add_request(&self, request: ForwardingRequest) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, token_id, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 &request.forward_addr,
                 &request.dest_domain,
                 &request.dest_recipient,
+                &request.token_id,
                 &request.created_at
             ],
         )
@@ -165,7 +170,7 @@ impl BackendStorage {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT forward_addr, dest_domain, dest_recipient, created_at
+                "SELECT forward_addr, dest_domain, dest_recipient, token_id, created_at
                  FROM forwarding_requests ORDER BY created_at",
             )
             .context("Failed to prepare SELECT statement")?;
@@ -176,7 +181,8 @@ impl BackendStorage {
                     forward_addr: row.get(0)?,
                     dest_domain: row.get(1)?,
                     dest_recipient: row.get(2)?,
-                    created_at: row.get(3)?,
+                    token_id: row.get(3)?,
+                    created_at: row.get(4)?,
                 })
             })
             .context("Failed to query forwarding requests")?;
@@ -220,7 +226,7 @@ impl BackendStorage {
 
         let mut stmt = conn
             .prepare(
-                "SELECT forward_addr, dest_domain, dest_recipient, created_at
+                "SELECT forward_addr, dest_domain, dest_recipient, token_id, created_at
                  FROM forwarding_requests WHERE forward_addr = ?1",
             )
             .context("Failed to prepare SELECT statement")?;
@@ -231,7 +237,8 @@ impl BackendStorage {
                     forward_addr: row.get(0)?,
                     dest_domain: row.get(1)?,
                     dest_recipient: row.get(2)?,
-                    created_at: row.get(3)?,
+                    token_id: row.get(3)?,
+                    created_at: row.get(4)?,
                 })
             })
             .optional()
@@ -361,11 +368,12 @@ impl Backend {
 struct ForwardingAddressQuery {
     dest_domain: u32,
     dest_recipient: String,
+    token_id: String,
 }
 
-/// GET /forwarding-address?dest_domain=<u32>&dest_recipient=<hex> - Derive forwarding address
+/// GET /forwarding-address?dest_domain=<u32>&dest_recipient=<hex>&token_id=<hex> - Derive forwarding address
 async fn get_forwarding_address(Query(params): Query<ForwardingAddressQuery>) -> impl IntoResponse {
-    match derive_forwarding_address(params.dest_domain, &params.dest_recipient) {
+    match derive_forwarding_address(params.dest_domain, &params.dest_recipient, &params.token_id) {
         Ok(address) => (
             StatusCode::OK,
             Json(serde_json::json!({ "address": address })),

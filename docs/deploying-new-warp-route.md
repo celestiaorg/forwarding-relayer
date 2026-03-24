@@ -68,13 +68,13 @@ This deploys the Mailbox, MerkleTreeHook, ValidatorAnnounce, and other core cont
 
 ```bash
 # Inside the hyperlane-init container:
-hyperlane warp deploy --config ./configs/warp-config.yaml --registry ./registry --yes
+hyperlane warp deploy --warp-route-id TIA/rethlocal --registry ./registry --yes
 ```
 
 Note the deployed token address from the output. You can also find it in:
 
 ```bash
-cat ./registry/deployments/warp_routes/TIA/warp-config-config.yaml
+cat ./registry/deployments/warp_routes/TIA/rethlocal-config.yaml
 # Look for addressOrDenom field
 ```
 
@@ -97,7 +97,7 @@ Both sides need to know about each other. Get the deployed addresses:
 # Inside the hyperlane-init container:
 
 # EVM warp token address
-WARP_TOKEN=$(grep "addressOrDenom:" ./registry/deployments/warp_routes/TIA/warp-config-config.yaml | awk '{print $NF}' | tr -d '"')
+WARP_TOKEN=$(grep "addressOrDenom:" ./registry/deployments/warp_routes/TIA/rethlocal-config.yaml | awk '{print $NF}' | tr -d '"')
 
 # Celestia collateral token ID (from the NoopISM deployment)
 CEL_TOKEN=$(node -e "const c=JSON.parse(require('fs').readFileSync('hyperlane-cosmosnative.json','utf8')); console.log(c.collateral_token_id)")

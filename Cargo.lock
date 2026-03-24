@@ -624,11 +624,11 @@ dependencies = [
 
 [[package]]
 name = "celestia-grpc"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e3d17a7cd950e6387bfb7aa494ab23989035763261a1bb725ef4430a2645ade"
+version = "1.0.0-rc.2"
+source = "git+https://github.com/celestiaorg/lumina.git?rev=7d35441b56268ddad3d964240bc25482518f28f9#7d35441b56268ddad3d964240bc25482518f28f9"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "bytes",
  "celestia-grpc-macros",
  "celestia-proto",
@@ -652,6 +652,7 @@ dependencies = [
  "tendermint-proto 0.40.4",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tonic 0.13.1",
  "tonic-web-wasm-client",
  "tracing",
@@ -660,9 +661,8 @@ dependencies = [
 
 [[package]]
 name = "celestia-grpc-macros"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d79e42455c42517ad6a7c3bc301640e534ccf37e1e37777b4a3ea12bca93d2a"
+version = "1.0.0-rc.2"
+source = "git+https://github.com/celestiaorg/lumina.git?rev=7d35441b56268ddad3d964240bc25482518f28f9#7d35441b56268ddad3d964240bc25482518f28f9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -671,9 +671,8 @@ dependencies = [
 
 [[package]]
 name = "celestia-proto"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65013505b04171f213d833b92bb076e9f229c36e5d144cb2faf25378397e2597"
+version = "1.0.0-rc.2"
+source = "git+https://github.com/celestiaorg/lumina.git?rev=7d35441b56268ddad3d964240bc25482518f28f9#7d35441b56268ddad3d964240bc25482518f28f9"
 dependencies = [
  "bytes",
  "prost",
@@ -689,9 +688,8 @@ dependencies = [
 
 [[package]]
 name = "celestia-types"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fe616393f4c88756ed6b8097167a623c6e4e48e2a3d75109e3ea5d5941587e0"
+version = "1.0.0-rc.2"
+source = "git+https://github.com/celestiaorg/lumina.git?rev=7d35441b56268ddad3d964240bc25482518f28f9#7d35441b56268ddad3d964240bc25482518f28f9"
 dependencies = [
  "base64 0.22.1",
  "bech32 0.11.1",
@@ -2858,9 +2856,8 @@ dependencies = [
 
 [[package]]
 name = "lumina-utils"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e68ba51207213b3fa8a42465526efdbe6c3c983a78a2a972d3a8e94d2bf9ab8"
+version = "1.0.0-rc.2"
+source = "git+https://github.com/celestiaorg/lumina.git?rev=7d35441b56268ddad3d964240bc25482518f28f9#7d35441b56268ddad3d964240bc25482518f28f9"
 dependencies = [
  "futures",
  "gloo-timers 0.3.0",
@@ -2868,7 +2865,10 @@ dependencies = [
  "pin-project",
  "send_wrapper 0.6.0",
  "tokio",
+ "tokio-util",
  "tonic 0.13.1",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-time",
 ]
 

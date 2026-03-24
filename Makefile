@@ -42,7 +42,7 @@ stop:
 	@docker compose down -v
 	@echo "--> Removing cached Hyperlane deployment files"
 	@rm -f hyperlane/hyperlane-cosmosnative.json
-	@rm -rf hyperlane/registry/chains/rethlocal/addresses.yaml hyperlane/registry/deployments/warp_routes/TIA/
+	@rm -rf hyperlane/registry/chains/rethlocal/addresses.yaml hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml
 	@git restore hyperlane/relayer-config.json 2>/dev/null || true
 	@echo "Full cleanup complete"
 .PHONY: stop
@@ -105,13 +105,19 @@ query-balance:
 .PHONY: query-anvil-balance
 
 ## derive-address: Derive the forwarding address for Anvil (domain 1234).
+## Usage: make derive-address TOKEN_ID=0x726f75...
 derive-address:
+	@if [ -z "$(TOKEN_ID)" ]; then \
+		echo "Error: TOKEN_ID is required. Usage: make derive-address TOKEN_ID=0x..."; \
+		exit 1; \
+	fi
 	@echo "--> Deriving forwarding address for Anvil (domain 1234)"
+	@echo "Token ID: $(TOKEN_ID)"
 	@echo "Domain: 1234"
 	@echo "Recipient: 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
 	@echo ""
-	@docker exec celestia-validator celestia-appd query forwarding derive-address 1234 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-.PHONY: derive-address-anvil
+	@docker exec celestia-validator celestia-appd query forwarding derive-address $(TOKEN_ID) 1234 0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+.PHONY: derive-address
 
 ## send-to-forward-addr: Send tokens to the default forwarding address for E2E testing.
 send-to-forward-addr:

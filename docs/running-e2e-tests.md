@@ -6,7 +6,7 @@ This guide walks you through running the automated end-to-end test, which starts
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- `ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0` Docker image
+- `celestia-app-standalone:local` Docker image (see docker-compose.yml)
 
 ## Quick Start
 
@@ -53,6 +53,7 @@ All defaults work out of the box. If you need to customize:
 | `--private-key-hex` | `PRIVATE_KEY_HEX` | Test private key hex | secp256k1 private key for signing Celestia txs |
 | `--fund-amount` | | `1000000` | Amount of utia to forward |
 | `--dest-domain` | | `1234` | Hyperlane destination domain |
+| `--token-id` | `TOKEN_ID` | Auto-detected | Hyperlane warp route token identifier (hex) |
 | `--timeout-secs` | | `120` | Max wait time for balance change |
 
 Example with custom options:

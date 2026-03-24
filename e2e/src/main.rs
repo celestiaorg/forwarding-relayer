@@ -9,7 +9,8 @@ use forwarding_relayer::{CreateForwardingRequest, ForwardingRequest};
 
 const DEFAULT_RECIPIENT: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const WARP_ROUTE_CONFIG_PATH: &str =
-    "hyperlane/registry/deployments/warp_routes/TIA/warp-config-config.yaml";
+    "hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml";
+const HYPERLANE_DEPLOY_CONFIG_PATH: &str = "hyperlane/hyperlane-cosmosnative.json";
 
 #[derive(Parser, Debug)]
 #[command(name = "e2e")]
@@ -42,6 +43,10 @@ struct Args {
     /// Destination Hyperlane domain
     #[arg(long, default_value = "1234")]
     dest_domain: u32,
+
+    /// Token ID (hex-encoded, auto-detected from deployment files if not provided)
+    #[arg(long, env = "TOKEN_ID")]
+    token_id: Option<String>,
 }
 
 #[tokio::main]
@@ -70,6 +75,15 @@ async fn main() -> Result<()> {
     };
     info!("Warp token: {}", warp_token);
 
+    // Auto-detect token ID from deployment files
+    let token_id = match args.token_id.clone() {
+        Some(t) => t,
+        None => detect_token_id().context(
+            "Failed to auto-detect token ID. Provide --token-id or set TOKEN_ID env var",
+        )?,
+    };
+    info!("Token ID: {}", token_id);
+
     // Compute 32-byte padded recipient for Hyperlane
     let dest_recipient = format!(
         "0x000000000000000000000000{}",
@@ -77,8 +91,11 @@ async fn main() -> Result<()> {
     );
 
     // Derive forwarding address
-    let forward_addr =
-        forwarding_relayer::derive_forwarding_address(args.dest_domain, &dest_recipient)?;
+    let forward_addr = forwarding_relayer::derive_forwarding_address(
+        args.dest_domain,
+        &dest_recipient,
+        &token_id,
+    )?;
     info!("Forwarding address: {}", forward_addr);
 
     // === Step 1: Verify services ===
@@ -103,6 +120,7 @@ async fn main() -> Result<()> {
         forward_addr: forward_addr.clone(),
         dest_domain: args.dest_domain,
         dest_recipient: dest_recipient.clone(),
+        token_id: token_id.clone(),
     };
 
     let resp = http_client
@@ -185,6 +203,23 @@ async fn main() -> Result<()> {
             final_balance
         )
     }
+}
+
+/// Detect collateral token ID from Hyperlane deployment output
+fn detect_token_id() -> Result<String> {
+    let content = std::fs::read_to_string(HYPERLANE_DEPLOY_CONFIG_PATH)
+        .context("Hyperlane deploy config not found. Has Hyperlane deployment completed?")?;
+
+    let json: serde_json::Value =
+        serde_json::from_str(&content).context("Failed to parse Hyperlane deploy config")?;
+
+    let token_id = json
+        .get("collateral_token_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .context("collateral_token_id not found in deploy config")?;
+
+    Ok(token_id)
 }
 
 /// Detect warp token address from Hyperlane deployment files

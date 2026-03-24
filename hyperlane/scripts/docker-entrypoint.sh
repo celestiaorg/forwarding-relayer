@@ -14,9 +14,9 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
   hyperlane core deploy --chain $EVM_CHAIN --registry ./registry --yes
 
   echo "Deploying Hyperlane warp synthetic token EVM contracts to $EVM_CHAIN..."
-  hyperlane warp deploy --config ./configs/warp-config.yaml --registry ./registry --yes
+  hyperlane warp deploy --warp-route-id TIA/rethlocal --registry ./registry --yes
 
-  WARP_TOKEN_ADDR=$(grep "addressOrDenom:" ./registry/deployments/warp_routes/TIA/warp-config-config.yaml | awk '{print $NF}' | tr -d '"')
+  WARP_TOKEN_ADDR=$(grep "addressOrDenom:" ./registry/deployments/warp_routes/TIA/rethlocal-config.yaml | awk '{print $NF}' | tr -d '"')
   echo "Warp token: $WARP_TOKEN_ADDR"
 
   # Read EVM addresses from deployment artifacts
