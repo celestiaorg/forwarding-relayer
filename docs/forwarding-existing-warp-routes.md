@@ -154,7 +154,7 @@ Check the wTIA balance on Anvil:
 
 ```bash
 # Find the warp token address
-WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml | awk '{print $NF}' | tr -d '"')
+WARP_TOKEN=$(awk '/addressOrDenom:/ {addr=$2} /chainName: rethlocal/ {print addr}' ./hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml | tr -d '"')
 
 # Query balance
 cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xYOUR_EVM_ADDRESS --rpc-url http://localhost:8545
@@ -185,7 +185,7 @@ Each recipient/token combination needs its own forwarding address. Repeat steps 
 ### Relayer says "all tokens failed to forward"
 
 Check that:
-- The warp route has enrolled routers on both chains (see [Deploying a New Warp Route](deploying-new-warp-route.md), Step 6)
+- The canonical warp route file `hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml` exists and includes both chain entries
 - The gRPC port (9090) is serving Cosmos SDK services, not CometBFT services (`grpcurl -plaintext localhost:9090 list` should show many services)
 
 ### Balance doesn't change on Anvil
@@ -204,7 +204,7 @@ The relayer account needs to be funded first (Step 6). It needs utia for gas fee
 
 ### Relayer submits MsgForward but no Hyperlane message appears
 
-The forwarding module may not have found a matching warp token with an enrolled router for the destination domain. Verify the enrollment:
+The forwarding module may not have found a matching token entry in the committed warp route config. Verify the Celestia token exists:
 
 ```bash
 docker exec celestia-validator celestia-appd query warp list-tokens --node http://localhost:26657

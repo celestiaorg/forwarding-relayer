@@ -11,12 +11,11 @@ This guide walks you through running the automated end-to-end test, which starts
 ## Quick Start
 
 ```bash
-# Build the Hyperlane init image (first time only)
-make docker-build-hyperlane
-
 # Run the full E2E test
 make e2e
 ```
+
+Use `make docker-build-hyperlane` only if you want to override the published `hyperlane-init` image locally while keeping the same Compose tag.
 
 That's it. On success you'll see:
 
@@ -74,15 +73,15 @@ make stop
 
 ### Hyperlane deployment times out
 
-The `hyperlane-init` container has a 120s timeout. Check its logs:
+The `make e2e` target waits up to 120s for `hyperlane-init` to exit successfully. Check its logs:
 
 ```bash
 docker logs hyperlane-init
 ```
 
 Common causes:
-- Celestia validator hasn't started producing blocks yet (wait longer)
-- The `ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0` image is missing or outdated
+- Celestia validator hasn't started producing blocks yet
+- The local `celestia-app-standalone:local` tag is missing or points at the wrong base image
 
 ### E2E test times out waiting for balance change
 
