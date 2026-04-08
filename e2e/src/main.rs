@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
     // Auto-detect warp token address from deployment files
     let warp_token = match args.warp_token.clone() {
         Some(t) => t,
-        None => detect_warp_token().context(
+        None => read_anvil_warp_token().context(
             "Failed to auto-detect warp token. Provide --warp-token or set WARP_TOKEN env var",
         )?,
     };
@@ -90,7 +90,7 @@ async fn main() -> Result<()> {
     // Auto-detect token ID from deployment files
     let token_id = match args.token_id.clone() {
         Some(t) => t,
-        None => detect_token_id().context(
+        None => read_celestia_warp_token().context(
             "Failed to auto-detect token ID. Provide --token-id or set TOKEN_ID env var",
         )?,
     };
@@ -217,8 +217,8 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Detect collateral token ID from Hyperlane deployment output
-fn detect_token_id() -> Result<String> {
+/// Returns the celestia collateral token ID in Hyperlane HexAddress string format.
+fn read_celestia_warp_token() -> Result<String> {
     let config = read_warp_route_config()?;
     config
         .tokens
@@ -228,8 +228,8 @@ fn detect_token_id() -> Result<String> {
         .context("Celestia collateral token ID not found in warp route config")
 }
 
-/// Detect warp token address from Hyperlane deployment files
-fn detect_warp_token() -> Result<String> {
+/// Returns the anvil synthetic token address in Ethereum address string format.
+fn read_anvil_warp_token() -> Result<String> {
     let config = read_warp_route_config()?;
     config
         .tokens
@@ -307,7 +307,7 @@ fn fund_celestia_account(address: &str, amount: u64) -> Result<()> {
             "800utia",
             "--yes",
             "--chain-id",
-            "celestia-zkevm-testnet",
+            "celestiadev",
             "--node",
             "http://localhost:26657",
         ])

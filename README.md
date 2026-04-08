@@ -94,7 +94,7 @@ The relayer needs gas for `MsgForward` transactions:
 ```bash
 docker exec celestia-validator celestia-appd tx bank send \
   default celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q 10000000utia \
-  --fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
+  --fees 800utia --yes --chain-id celestiadev --node http://localhost:26657
 ```
 
 ### 3. Start the backend

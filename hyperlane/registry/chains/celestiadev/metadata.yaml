@@ -4,7 +4,7 @@ blocks:
   confirmations: 1
   estimateBlockTime: 6
   reorgPeriod: 1
-chainId: celestia-zkevm-testnet
+chainId: celestiadev
 displayName: Celestia
 domainId: 69420
 gasPrice:

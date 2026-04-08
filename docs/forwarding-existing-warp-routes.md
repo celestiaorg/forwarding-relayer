@@ -106,7 +106,7 @@ The relayer needs gas to submit `MsgForward` transactions on Celestia:
 ```bash
 docker exec celestia-validator celestia-appd tx bank send \
   default celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q 10000000utia \
-  --fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
+  --fees 800utia --yes --chain-id celestiadev --node http://localhost:26657
 ```
 
 The relayer address `celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q` corresponds to the default test private key hex. If you use a custom key, derive and fund that address instead.
@@ -143,7 +143,7 @@ Or directly:
 ```bash
 docker exec celestia-validator celestia-appd tx bank send \
   default celestia1... 1000000utia \
-  --fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
+  --fees 800utia --yes --chain-id celestiadev --node http://localhost:26657
 ```
 
 The relayer will detect the deposit on its next poll cycle (~6s), submit `MsgForward`, and the Hyperlane relayer will relay the message to the EVM chain.

@@ -78,7 +78,7 @@ send-to-address:
 	echo "--> Sending $${AMOUNT}utia to $(ADDR)"; \
 	docker exec celestia-validator celestia-appd tx bank send \
 		default $(ADDR) $${AMOUNT}utia \
-		--fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
+		--fees 800utia --yes --chain-id celestiadev --node http://localhost:26657
 .PHONY: send-to-address
 
 ## query-balance: Query wTIA token balance on Anvil (requires WARP_TOKEN env var).

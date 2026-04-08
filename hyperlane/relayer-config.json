@@ -43,7 +43,7 @@
                 "reorgPeriod": 1
             },
             "canonicalAsset": "utia",
-            "chainId": "celestia-zkevm-testnet",
+            "chainId": "celestiadev",
             "contractAddressBytes": 32,
             "deployer": {
                 "name": "Damian",
