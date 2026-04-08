@@ -62,7 +62,7 @@ If you only have the published image available locally, tag it once:
 
 ```bash
 docker pull ghcr.io/celestiaorg/celestia-app-standalone:v8.0.0-mocha
-docker tag ghcr.io/celestiaorg/celestia-app-standalone:v7.0.0-rc0 celestia-app-standalone:local
+docker tag ghcr.io/celestiaorg/celestia-app-standalone:v8.0.0-mocha celestia-app-standalone:local
 ```
 
 ## Manual Step-by-Step
