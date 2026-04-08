@@ -169,13 +169,6 @@ e2e:
 	@cargo run --bin e2e -p e2e --release
 .PHONY: e2e
 
-
-## docker-build-hyperlane: Build Hyperlane init Docker image as a local override for Compose.
-docker-build-hyperlane:
-	@echo "--> Building hyperlane-init image (optional local override for ghcr.io/celestiaorg/hyperlane-init:sha-9406639)"
-	@docker build --platform linux/amd64 -t ghcr.io/celestiaorg/hyperlane-init:sha-9406639 -f hyperlane/Dockerfile .
-.PHONY: docker-build-hyperlane
-
 ## docker-build-relayer: Build forwarding-relayer Docker image.
 docker-build-relayer:
 	@echo "--> Building forwarding-relayer image"
