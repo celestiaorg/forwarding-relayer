@@ -56,14 +56,6 @@ SUCCESS! 1000000 utia forwarded from Celestia to Anvil as wTIA
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- `celestia-app-standalone:local` Docker image
-
-If you only have the published image available locally, tag it once:
-
-```bash
-docker pull ghcr.io/celestiaorg/celestia-app-standalone:v8.0.0-mocha
-docker tag ghcr.io/celestiaorg/celestia-app-standalone:v8.0.0-mocha celestia-app-standalone:local
-```
 
 ## Manual Step-by-Step
 

@@ -6,7 +6,6 @@ This guide walks you through running the automated end-to-end test, which starts
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- `celestia-app-standalone:local` Docker image (see docker-compose.yml)
 
 ## Quick Start
 
@@ -81,7 +80,6 @@ docker logs hyperlane-init
 
 Common causes:
 - Celestia validator hasn't started producing blocks yet
-- The local `celestia-app-standalone:local` tag is missing or points at the wrong base image
 
 ### E2E test times out waiting for balance change
 
