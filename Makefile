@@ -36,18 +36,14 @@ start:
 	@docker compose up --detach
 .PHONY: start
 
-## stop: Stop all Docker containers, remove volumes, and clean cached deployment files.
+## stop: Stop all Docker containers and remove volumes.
 stop:
 	@echo "--> Stopping all Docker containers"
 	@docker compose down -v
-	@echo "--> Removing cached Hyperlane deployment files"
-	@rm -f hyperlane/hyperlane-cosmosnative.json
-	@rm -rf hyperlane/registry/chains/rethlocal/addresses.yaml hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml
-	@git restore hyperlane/relayer-config.json 2>/dev/null || true
 	@echo "Full cleanup complete"
 .PHONY: stop
 
-## clean: Alias for stop (remove cached Hyperlane deployment files).
+## clean: Alias for stop.
 clean: stop
 .PHONY: clean
 
@@ -82,7 +78,7 @@ send-to-address:
 	echo "--> Sending $${AMOUNT}utia to $(ADDR)"; \
 	docker exec celestia-validator celestia-appd tx bank send \
 		default $(ADDR) $${AMOUNT}utia \
-		--fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
+		--fees 800utia --yes --chain-id celestiadev --node http://localhost:26657
 .PHONY: send-to-address
 
 ## query-balance: Query wTIA token balance on Anvil (requires WARP_TOKEN env var).
@@ -91,10 +87,10 @@ send-to-address:
 query-balance:
 	@if [ -z "$(WARP_TOKEN)" ]; then \
 		echo "Error: WARP_TOKEN environment variable is required."; \
-		echo "Usage: WARP_TOKEN=0xYourTokenAddress make query-anvil-balance"; \
+		echo "Usage: WARP_TOKEN=0xYourTokenAddress make query-balance"; \
 		echo ""; \
 		echo "To find the token address, check:"; \
-		echo "  docker exec hyperlane-init cat /home/hyperlane/registry/deployments/warp_routes/TIA/anvil-addresses.yaml"; \
+		echo "  docker exec hyperlane-init cat /home/hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml"; \
 		exit 1; \
 	fi; \
 	RECIPIENT=$${RECIPIENT:-0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266}; \
@@ -172,13 +168,6 @@ e2e:
 	@echo "--> Running E2E test"
 	@cargo run --bin e2e -p e2e --release
 .PHONY: e2e
-
-
-## docker-build-hyperlane: Build Hyperlane init Docker image.
-docker-build-hyperlane:
-	@echo "--> Building hyperlane-init image"
-	@docker build -t ghcr.io/celestiaorg/hyperlane-init:local -f hyperlane/Dockerfile .
-.PHONY: docker-build-hyperlane
 
 ## docker-build-relayer: Build forwarding-relayer Docker image.
 docker-build-relayer:

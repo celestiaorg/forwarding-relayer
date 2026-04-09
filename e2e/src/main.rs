@@ -9,8 +9,20 @@ use forwarding_relayer::{CreateForwardingRequest, ForwardingRequest};
 
 const DEFAULT_RECIPIENT: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const WARP_ROUTE_CONFIG_PATH: &str =
-    "hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml";
-const HYPERLANE_DEPLOY_CONFIG_PATH: &str = "hyperlane/hyperlane-cosmosnative.json";
+    "testnet/hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml";
+
+#[derive(Debug, serde::Deserialize)]
+struct WarpRouteConfig {
+    tokens: Vec<WarpRouteToken>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WarpRouteToken {
+    #[serde(rename = "addressOrDenom")]
+    address_or_denom: String,
+    #[serde(rename = "chainName")]
+    chain_name: String,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "e2e")]
@@ -69,7 +81,7 @@ async fn main() -> Result<()> {
     // Auto-detect warp token address from deployment files
     let warp_token = match args.warp_token.clone() {
         Some(t) => t,
-        None => detect_warp_token().context(
+        None => read_anvil_warp_token().context(
             "Failed to auto-detect warp token. Provide --warp-token or set WARP_TOKEN env var",
         )?,
     };
@@ -78,7 +90,7 @@ async fn main() -> Result<()> {
     // Auto-detect token ID from deployment files
     let token_id = match args.token_id.clone() {
         Some(t) => t,
-        None => detect_token_id().context(
+        None => read_celestia_warp_token().context(
             "Failed to auto-detect token ID. Provide --token-id or set TOKEN_ID env var",
         )?,
     };
@@ -205,42 +217,32 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Detect collateral token ID from Hyperlane deployment output
-fn detect_token_id() -> Result<String> {
-    let content = std::fs::read_to_string(HYPERLANE_DEPLOY_CONFIG_PATH)
-        .context("Hyperlane deploy config not found. Has Hyperlane deployment completed?")?;
-
-    let json: serde_json::Value =
-        serde_json::from_str(&content).context("Failed to parse Hyperlane deploy config")?;
-
-    let token_id = json
-        .get("collateral_token_id")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .context("collateral_token_id not found in deploy config")?;
-
-    Ok(token_id)
+/// Returns the celestia collateral token ID in Hyperlane HexAddress string format.
+fn read_celestia_warp_token() -> Result<String> {
+    let config = read_warp_route_config()?;
+    config
+        .tokens
+        .into_iter()
+        .find(|token| token.chain_name == "celestiadev")
+        .map(|token| token.address_or_denom)
+        .context("Celestia collateral token ID not found in warp route config")
 }
 
-/// Detect warp token address from Hyperlane deployment files
-fn detect_warp_token() -> Result<String> {
+/// Returns the anvil synthetic token address in Ethereum address string format.
+fn read_anvil_warp_token() -> Result<String> {
+    let config = read_warp_route_config()?;
+    config
+        .tokens
+        .into_iter()
+        .find(|token| token.chain_name == "rethlocal")
+        .map(|token| token.address_or_denom)
+        .context("rethlocal synthetic token address not found in warp route config")
+}
+
+fn read_warp_route_config() -> Result<WarpRouteConfig> {
     let content = std::fs::read_to_string(WARP_ROUTE_CONFIG_PATH)
         .context("Warp route config not found. Has Hyperlane deployment completed?")?;
-
-    for line in content.lines() {
-        if line.contains("addressOrDenom:") {
-            if let Some(addr) = line
-                .split(':')
-                .nth(1)
-                .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
-                .filter(|s| !s.is_empty())
-            {
-                return Ok(addr);
-            }
-        }
-    }
-
-    anyhow::bail!("addressOrDenom not found in {}", WARP_ROUTE_CONFIG_PATH)
+    serde_yaml::from_str(&content).context("Failed to parse warp route config")
 }
 
 /// Verify that Anvil is running and responsive
@@ -305,7 +307,7 @@ fn fund_celestia_account(address: &str, amount: u64) -> Result<()> {
             "800utia",
             "--yes",
             "--chain-id",
-            "celestia-zkevm-testnet",
+            "celestiadev",
             "--node",
             "http://localhost:26657",
         ])

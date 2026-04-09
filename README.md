@@ -16,11 +16,11 @@ When tokens (utia) are sent to a forwarding address on Celestia, the relayer det
 │         │               │                   │    4. mint wTIA     │
 │         ▼               │   3. Hyperlane    │         │           │
 │  Forwarding Module ─────┼──── message ─────►│  Hyperlane Mailbox  │
-│  (collateral + mailbox) │  (hyp relayer)    │                     │
+│  (collateral + mailbox) │  (Hyperlane relay)│                     │
 │         ▲               │                   └─────────────────────┘
 │         │               │
 │    2. MsgForward        │
-│    (fwd relayer)        │
+│    (forwarding relayer) │
 └─────────────────────────┘
 ```
 
@@ -33,9 +33,6 @@ When tokens (utia) are sent to a forwarding address on Celestia, the relayer det
 ## Quick Start
 
 ```bash
-# Build the Hyperlane init image (first time only)
-make docker-build-hyperlane
-
 # Run the E2E test (starts containers, deploys contracts, forwards tokens, verifies)
 make e2e
 ```
@@ -59,16 +56,16 @@ SUCCESS! 1000000 utia forwarded from Celestia to Anvil as wTIA
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Rust](https://rustup.rs/) toolchain
-- `celestia-app-standalone:local` Docker image (see docker-compose.yml)
 
 ## Manual Step-by-Step
 
 ### 1. Start the environment
 
 ```bash
-make docker-build-hyperlane  # first time only
 make start
 ```
+
+Use `make docker-build-hyperlane` only if you want to override the published `hyperlane-init` image locally while keeping the same Compose tag.
 
 Wait for `hyperlane-init` to exit with code 0 (`docker ps` to check).
 
@@ -89,7 +86,7 @@ The relayer needs gas for `MsgForward` transactions:
 ```bash
 docker exec celestia-validator celestia-appd tx bank send \
   default celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q 10000000utia \
-  --fees 800utia --yes --chain-id celestia-zkevm-testnet --node http://localhost:26657
+  --fees 800utia --yes --chain-id celestiadev --node http://localhost:26657
 ```
 
 ### 3. Start the backend
@@ -131,7 +128,7 @@ RUST_LOG=info ./target/release/forwarding-relayer relayer \
 make send-to-address ADDR=<forwarding address> AMOUNT=1000000
 
 # After ~30s, check wTIA balance on Anvil
-WARP_TOKEN=$(grep addressOrDenom ./hyperlane/registry/deployments/warp_routes/TIA/rethlocal-config.yaml | awk '{print $NF}' | tr -d '"')
+WARP_TOKEN=$(awk '/addressOrDenom:/ {addr=$2} /chainName: rethlocal/ {print addr}' ./testnet/hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml | tr -d '"')
 cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 --rpc-url http://localhost:8545
 ```
 
@@ -153,7 +150,7 @@ cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xf39Fd6e51aad88F6F4ce6aB882
 | Anvil domain | 1234 |
 | Anvil test account | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` |
 | Relayer address | `celestia1y3kf30y9zprqzr2g2gjjkw3wls0a35pfs3a58q` |
-| ISM | NoopISM (testing only) |
+| ISM | TestISM (testing only) |
 
 ## Makefile Targets
 
@@ -161,7 +158,7 @@ cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xf39Fd6e51aad88F6F4ce6aB882
 make start              Start all Docker containers
 make stop               Stop containers and remove volumes
 make e2e                Full E2E test (start, deploy, forward, verify)
-make docker-build-hyperlane  Rebuild Hyperlane init image
+make docker-build-hyperlane  Optional local override for the hyperlane-init image
 make derive-address     Derive forwarding address for Anvil
 make transfer           Direct Hyperlane warp transfer (no forwarding)
 make send-to-address    Send utia to a Celestia address

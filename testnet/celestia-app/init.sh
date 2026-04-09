@@ -9,8 +9,8 @@ MNEMONIC_NODE="father remove minimum call daughter fly runway sponsor two exile 
 if [ ! -f "$GENESIS_FILE" ]; then
     echo "Initializing Celestia App state..."
 
-    celestia-appd init zkevm-test --chain-id celestia-zkevm-testnet --home $HOME_DIR
-    celestia-appd config set client chain-id celestia-zkevm-testnet --home $HOME_DIR
+    celestia-appd init zkevm-test --chain-id celestiadev --home $HOME_DIR
+    celestia-appd config set client chain-id celestiadev --home $HOME_DIR
     celestia-appd config set client keyring-backend test --home $HOME_DIR
 
     # Enable app grpc and expose to network
