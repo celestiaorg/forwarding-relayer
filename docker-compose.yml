@@ -88,7 +88,7 @@ services:
     platform: linux/amd64
     container_name: hyperlane-init
     volumes:
-      - ./hyperlane:/home/hyperlane/
+      - ./testnet/hyperlane:/home/hyperlane/
     working_dir: /home/hyperlane
     entrypoint: "scripts/docker-entrypoint.sh"
     depends_on:
@@ -155,7 +155,7 @@ services:
     environment:
       - CONFIG_FILES=/app/config/config.json
     volumes:
-      - ./hyperlane/relayer-config.json:/app/config/config.json
+      - ./testnet/hyperlane/relayer-config.json:/app/config/config.json
     command: "/app/relayer"
     depends_on:
       hyperlane-init:

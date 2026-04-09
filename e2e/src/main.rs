@@ -9,7 +9,7 @@ use forwarding_relayer::{CreateForwardingRequest, ForwardingRequest};
 
 const DEFAULT_RECIPIENT: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const WARP_ROUTE_CONFIG_PATH: &str =
-    "hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml";
+    "testnet/hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml";
 
 #[derive(Debug, serde::Deserialize)]
 struct WarpRouteConfig {

@@ -154,7 +154,7 @@ Check the wTIA balance on Anvil:
 
 ```bash
 # Find the warp token address
-WARP_TOKEN=$(awk '/addressOrDenom:/ {addr=$2} /chainName: rethlocal/ {print addr}' ./hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml | tr -d '"')
+WARP_TOKEN=$(awk '/addressOrDenom:/ {addr=$2} /chainName: rethlocal/ {print addr}' ./testnet/hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml | tr -d '"')
 
 # Query balance
 cast call $WARP_TOKEN "balanceOf(address)(uint256)" 0xYOUR_EVM_ADDRESS --rpc-url http://localhost:8545
@@ -185,7 +185,7 @@ Each recipient/token combination needs its own forwarding address. Repeat steps 
 ### Relayer says "all tokens failed to forward"
 
 Check that:
-- The canonical warp route file `hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml` exists and includes both chain entries
+- The canonical warp route file `testnet/hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml` exists and includes both chain entries
 - The gRPC port (9090) is serving Cosmos SDK services, not CometBFT services (`grpcurl -plaintext localhost:9090 list` should show many services)
 
 ### Balance doesn't change on Anvil
