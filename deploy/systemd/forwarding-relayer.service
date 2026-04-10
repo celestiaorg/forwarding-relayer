@@ -1,0 +1,23 @@
+[Unit]
+Description=Forwarding Relayer Worker
+Wants=network-online.target
+After=network-online.target forwarding-backend.service
+Requires=forwarding-backend.service
+
+[Service]
+Type=simple
+User=forwarding-relayer
+Group=forwarding-relayer
+WorkingDirectory=/var/lib/forwarding-relayer
+EnvironmentFile=/etc/forwarding-relayer/relayer.env
+ExecStart=/usr/local/bin/forwarding-relayer relayer
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/forwarding-relayer
+
+[Install]
+WantedBy=multi-user.target
