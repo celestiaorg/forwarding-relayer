@@ -32,7 +32,7 @@ sudo install -m 0640 deploy/systemd/relayer.env.example /etc/forwarding-relayer/
 
 Edit `/etc/forwarding-relayer/backend.env` and `/etc/forwarding-relayer/relayer.env` before starting the services.
 
-The relayer env file must include a real `PRIVATE_KEY_HEX`, and the URLs must match your Celestia node and backend deployment.
+The relayer env file must include a real `PRIVATE_KEY_HEX`, and the URLs must match your Celestia gRPC and backend deployment.
 
 ## Start
 
