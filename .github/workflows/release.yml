@@ -1,0 +1,43 @@
+name: Release Binary
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: forwarding-relayer
+  TARGET_TRIPLE: x86_64-unknown-linux-gnu
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binary
+        run: cargo build --release --locked --bin $BINARY_NAME
+
+      - name: Stage release asset
+        run: |
+          mkdir -p dist
+          cp target/release/$BINARY_NAME dist/${BINARY_NAME}-${TARGET_TRIPLE}
+
+      - name: Upload binary to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.BINARY_NAME }}-${{ env.TARGET_TRIPLE }}
