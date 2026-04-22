@@ -37,7 +37,7 @@ impl CelestiaClient {
     /// Creates and returns a new CelestiaClient using the provided private key.
     pub(crate) async fn new(grpc_url: String, private_key_hex: String) -> Result<Self> {
         let (private_key_hex, signer_address) = Self::prepare_private_key(&private_key_hex)?;
-        let endpoint = Endpoint::from_shared(grpc_url.clone())
+        let endpoint = Endpoint::new(grpc_url.clone())
             .with_context(|| {
                 format!(
                     "Invalid CELESTIA_GRPC URL (expected http/https): {}",
