@@ -133,6 +133,12 @@ impl Relayer {
         Ok(())
     }
 
+    /// Returns the age in seconds if `request` has exceeded `max_request_age_seconds`.
+    fn expired_age(&self, request: &ForwardingRequest) -> Option<i64> {
+        let age = calculate_request_age(&request.created_at).ok()?;
+        (age > self.config.max_request_age_seconds as i64).then_some(age)
+    }
+
     /// Main relayer loop
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting forwarding relayer");
@@ -197,23 +203,21 @@ impl Relayer {
         let forward_addr = &request.forward_addr;
         let dest_domain = request.dest_domain.to_string();
 
-        // Check if request has exceeded maximum age
-        if let Some(created_at) = &request.created_at {
-            if let Ok(age_seconds) = calculate_request_age(created_at) {
-                if age_seconds > self.config.max_request_age_seconds as i64 {
-                    warn!(
-                        "Skipping request for {} (age: {} seconds, max: {} seconds)",
-                        forward_addr, age_seconds, self.config.max_request_age_seconds
-                    );
-                    counter!(
-                        "forwarding_requests_processed_total",
-                        "status" => "skipped_too_old",
-                        "dest_domain" => dest_domain
-                    )
-                    .increment(1);
-                    return Ok(());
-                }
+        // Drop requests that have outlived the configured max age
+        if let Some(age) = self.expired_age(request) {
+            match self.complete_request(forward_addr).await {
+                Ok(_) => warn!(
+                    "Dropped dead request: forward_addr={} dest_domain={} dest_recipient={} token_id={} created_at={} age={}s",
+                    forward_addr,
+                    request.dest_domain,
+                    request.dest_recipient,
+                    request.token_id,
+                    request.created_at,
+                    age,
+                ),
+                Err(e) => warn!("Failed to drop dead request for {}: {:#}", forward_addr, e),
             }
+            return Ok(());
         }
 
         debug!("Checking balance at {}", forward_addr);

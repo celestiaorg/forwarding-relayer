@@ -66,7 +66,7 @@ impl BackendStorage {
                 dest_domain    INTEGER NOT NULL,
                 dest_recipient TEXT NOT NULL,
                 token_id       TEXT NOT NULL,
-                created_at     TEXT
+                created_at     TEXT NOT NULL
             )",
             [],
         )
@@ -114,7 +114,7 @@ impl BackendStorage {
                 dest_domain: create_req.dest_domain,
                 dest_recipient: create_req.dest_recipient,
                 token_id: create_req.token_id,
-                created_at: Some(created_at),
+                created_at,
             }
         } else {
             let mut stmt = conn
