@@ -43,6 +43,10 @@ pub struct RelayerConfig {
     #[arg(long, env = "IGP_FEE_BUFFER", default_value = "1.1")]
     pub igp_fee_buffer: f64,
 
+    /// Maximum age for a forwarding request in seconds before it's considered dead (default: 604800 = 7 days)
+    #[arg(long, env = "MAX_REQUEST_AGE_SECONDS", default_value = "604800")]
+    pub max_request_age_seconds: u64,
+
     /// Metrics port for Prometheus scraping
     #[arg(long, env = "RELAYER_METRICS_PORT")]
     pub metrics_port: Option<u16>,
@@ -193,6 +197,25 @@ impl Relayer {
         let forward_addr = &request.forward_addr;
         let dest_domain = request.dest_domain.to_string();
 
+        // Check if request has exceeded maximum age
+        if let Some(created_at) = &request.created_at {
+            if let Ok(age_seconds) = calculate_request_age(created_at) {
+                if age_seconds > self.config.max_request_age_seconds as i64 {
+                    warn!(
+                        "Skipping request for {} (age: {} seconds, max: {} seconds)",
+                        forward_addr, age_seconds, self.config.max_request_age_seconds
+                    );
+                    counter!(
+                        "forwarding_requests_processed_total",
+                        "status" => "skipped_too_old",
+                        "dest_domain" => dest_domain
+                    )
+                    .increment(1);
+                    return Ok(());
+                }
+            }
+        }
+
         debug!("Checking balance at {}", forward_addr);
 
         // Query current balance
@@ -299,6 +322,16 @@ impl Relayer {
 
         Ok(())
     }
+}
+
+/// Calculate the age of a forwarding request in seconds from its created_at timestamp.
+fn calculate_request_age(created_at: &str) -> Result<i64> {
+    let created = chrono::DateTime::parse_from_rfc3339(created_at)
+        .with_context(|| format!("Invalid request timestamp: {created_at}"))?;
+    let age = chrono::Utc::now()
+        .signed_duration_since(created.with_timezone(&chrono::Utc))
+        .num_seconds();
+    Ok(age.max(0))
 }
 
 pub fn parse_metric_amount(value: &str) -> Option<f64> {
