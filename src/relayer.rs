@@ -79,66 +79,6 @@ impl Relayer {
         })
     }
 
-    /// Fetch forwarding requests from backend
-    async fn fetch_forwarding_requests(&self) -> Result<Vec<ForwardingRequest>> {
-        let url = format!("{}/forwarding-requests", self.config.backend_url);
-
-        let response = self
-            .http_client
-            .get(&url)
-            .send()
-            .await
-            .context("Failed to fetch forwarding requests from backend")?;
-
-        if !response.status().is_success() {
-            anyhow::bail!(
-                "Backend returned error: {} - {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
-            );
-        }
-
-        let requests = response
-            .json::<Vec<ForwardingRequest>>()
-            .await
-            .context("Failed to parse forwarding requests")?;
-
-        Ok(requests)
-    }
-
-    /// Notify backend that forwarding for an address completed (removes the pending request)
-    async fn complete_request(&self, forward_addr: &str) -> Result<()> {
-        let url = format!(
-            "{}/forwarding-requests/{}",
-            self.config.backend_url, forward_addr
-        );
-
-        let response = self
-            .http_client
-            .delete(&url)
-            .send()
-            .await
-            .with_context(|| format!("Failed to complete request for {}", forward_addr))?;
-
-        if !response.status().is_success() {
-            warn!(
-                "Failed to remove backend request for {}: {}",
-                forward_addr,
-                response.status()
-            );
-        } else {
-            info!("Removed completed request for address {}", forward_addr);
-        }
-
-        Ok(())
-    }
-
-    /// Returns the age in seconds if `request` has exceeded `max_request_age_seconds`.
-    fn expired_age(&self, request: &ForwardingRequest) -> Option<i64> {
-        let age = calculate_request_age(&request.created_at).ok()?;
-        (age > self.config.max_request_age_seconds as i64).then_some(age)
-    }
-
     /// Main relayer loop
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting forwarding relayer");
@@ -326,16 +266,66 @@ impl Relayer {
 
         Ok(())
     }
-}
 
-/// Calculate the age of a forwarding request in seconds from its created_at timestamp.
-fn calculate_request_age(created_at: &str) -> Result<i64> {
-    let created = chrono::DateTime::parse_from_rfc3339(created_at)
-        .with_context(|| format!("Invalid request timestamp: {created_at}"))?;
-    let age = chrono::Utc::now()
-        .signed_duration_since(created.with_timezone(&chrono::Utc))
-        .num_seconds();
-    Ok(age.max(0))
+    /// Fetch forwarding requests from backend
+    async fn fetch_forwarding_requests(&self) -> Result<Vec<ForwardingRequest>> {
+        let url = format!("{}/forwarding-requests", self.config.backend_url);
+
+        let response = self
+            .http_client
+            .get(&url)
+            .send()
+            .await
+            .context("Failed to fetch forwarding requests from backend")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "Backend returned error: {} - {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            );
+        }
+
+        let requests = response
+            .json::<Vec<ForwardingRequest>>()
+            .await
+            .context("Failed to parse forwarding requests")?;
+
+        Ok(requests)
+    }
+
+    /// Notify backend that forwarding for an address completed (removes the pending request)
+    async fn complete_request(&self, forward_addr: &str) -> Result<()> {
+        let url = format!(
+            "{}/forwarding-requests/{}",
+            self.config.backend_url, forward_addr
+        );
+
+        let response = self
+            .http_client
+            .delete(&url)
+            .send()
+            .await
+            .with_context(|| format!("Failed to complete request for {}", forward_addr))?;
+
+        if !response.status().is_success() {
+            warn!(
+                "Failed to remove backend request for {}: {}",
+                forward_addr,
+                response.status()
+            );
+        } else {
+            info!("Removed completed request for address {}", forward_addr);
+        }
+
+        Ok(())
+    }
+
+    /// Returns the age in seconds if `request` has exceeded `max_request_age_seconds`.
+    fn expired_age(&self, request: &ForwardingRequest) -> Option<i64> {
+        let age = calculate_request_age(&request.created_at).ok()?;
+        (age > self.config.max_request_age_seconds as i64).then_some(age)
+    }
 }
 
 pub fn parse_metric_amount(value: &str) -> Option<f64> {
@@ -346,4 +336,14 @@ pub fn parse_metric_amount(value: &str) -> Option<f64> {
             None
         }
     }
+}
+
+/// Calculate the age of a forwarding request in seconds from its created_at timestamp.
+fn calculate_request_age(created_at: &str) -> Result<i64> {
+    let created = chrono::DateTime::parse_from_rfc3339(created_at)
+        .with_context(|| format!("Invalid request timestamp: {created_at}"))?;
+    let age = chrono::Utc::now()
+        .signed_duration_since(created.with_timezone(&chrono::Utc))
+        .num_seconds();
+    Ok(age.max(0))
 }

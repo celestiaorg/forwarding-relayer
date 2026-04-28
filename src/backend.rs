@@ -363,6 +363,20 @@ impl Backend {
     }
 }
 
+pub fn oldest_pending_request_age_seconds(created_at: Option<&str>) -> Result<f64> {
+    let Some(created_at) = created_at else {
+        return Ok(0.0);
+    };
+
+    let created_at = chrono::DateTime::parse_from_rfc3339(created_at)
+        .with_context(|| format!("Invalid forwarding request timestamp: {created_at}"))?;
+    let age = chrono::Utc::now()
+        .signed_duration_since(created_at.with_timezone(&chrono::Utc))
+        .num_seconds();
+
+    Ok(age.max(0) as f64)
+}
+
 /// Query params for GET /forwarding-address
 #[derive(Deserialize)]
 struct ForwardingAddressQuery {
@@ -479,18 +493,4 @@ fn update_pending_request_metrics(snapshot: &PendingRequestMetricsSnapshot) -> R
     gauge!("oldest_pending_request_age_seconds").set(age_seconds);
 
     Ok(())
-}
-
-pub fn oldest_pending_request_age_seconds(created_at: Option<&str>) -> Result<f64> {
-    let Some(created_at) = created_at else {
-        return Ok(0.0);
-    };
-
-    let created_at = chrono::DateTime::parse_from_rfc3339(created_at)
-        .with_context(|| format!("Invalid forwarding request timestamp: {created_at}"))?;
-    let age = chrono::Utc::now()
-        .signed_duration_since(created_at.with_timezone(&chrono::Utc))
-        .num_seconds();
-
-    Ok(age.max(0) as f64)
 }
