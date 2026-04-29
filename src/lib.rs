@@ -60,8 +60,7 @@ pub struct ForwardingRequest {
     pub dest_domain: u32,
     pub dest_recipient: String,
     pub token_id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<String>,
+    pub created_at: String,
 }
 
 /// Request body for creating a new forwarding request

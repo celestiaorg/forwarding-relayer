@@ -37,7 +37,7 @@ async fn test_backend_api() {
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
         token_id: token_id.to_string(),
-        created_at: None,
+        created_at: chrono::Utc::now().to_rfc3339(),
     };
 
     state.add_request(request).unwrap();
