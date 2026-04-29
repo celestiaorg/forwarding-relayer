@@ -43,8 +43,8 @@ pub struct RelayerConfig {
     #[arg(long, env = "IGP_FEE_BUFFER", default_value = "1.1")]
     pub igp_fee_buffer: f64,
 
-    /// Maximum age for a forwarding request in seconds before it's considered dead (default: 604800 = 7 days)
-    #[arg(long, env = "MAX_REQUEST_AGE_SECONDS", default_value = "604800")]
+    /// Maximum age for a forwarding request in seconds before it's considered dead (default: 86400 = 1 day)
+    #[arg(long, env = "MAX_REQUEST_AGE_SECONDS", default_value = "86400")]
     pub max_request_age_seconds: u64,
 
     /// Metrics port for Prometheus scraping
