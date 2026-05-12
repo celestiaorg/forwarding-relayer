@@ -122,12 +122,16 @@ async fn test_idempotent_create() {
     let client = http_client();
     let base_url = "http://127.0.0.1:3002";
 
+    let dest_domain = 42161u32;
+    let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
+    let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
+    let forward_addr = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
+
     let create_req = CreateForwardingRequest {
-        forward_addr: "celestia1test1".to_string(),
-        dest_domain: 42161,
-        dest_recipient: "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000"
-            .to_string(),
-        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131".to_string(),
+        forward_addr: forward_addr.clone(),
+        dest_domain,
+        dest_recipient: dest_recipient.to_string(),
+        token_id: token_id.to_string(),
     };
 
     // First POST - should create
@@ -140,11 +144,8 @@ async fn test_idempotent_create() {
 
     assert_eq!(response.status(), 201); // Created
     let created: ForwardingRequest = response.json().await.unwrap();
-    assert_eq!(created.forward_addr, "celestia1test1");
-    assert_eq!(
-        created.token_id,
-        "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131"
-    );
+    assert_eq!(created.forward_addr, forward_addr);
+    assert_eq!(created.token_id, token_id);
 
     // Second POST for the same address - should return existing
     let response2 = client
@@ -156,7 +157,22 @@ async fn test_idempotent_create() {
 
     assert_eq!(response2.status(), 200); // OK - returned existing, not 201 Created
     let returned: ForwardingRequest = response2.json().await.unwrap();
-    assert_eq!(returned.forward_addr, "celestia1test1");
+    assert_eq!(returned.forward_addr, forward_addr);
+
+    // POST with mismatched forward_addr - should be rejected
+    let bad_req = CreateForwardingRequest {
+        forward_addr: "celestia1bogus".to_string(),
+        dest_domain,
+        dest_recipient: dest_recipient.to_string(),
+        token_id: token_id.to_string(),
+    };
+    let bad_response = client
+        .post(format!("{}/forwarding-requests", base_url))
+        .json(&bad_req)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_response.status(), 400);
 
     // List all requests - should only have one
     let response = client
@@ -167,7 +183,7 @@ async fn test_idempotent_create() {
 
     let requests: Vec<ForwardingRequest> = response.json().await.unwrap();
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].forward_addr, "celestia1test1");
+    assert_eq!(requests[0].forward_addr, forward_addr);
 }
 
 #[test]
@@ -262,12 +278,17 @@ async fn test_backend_metrics_endpoint() {
     wait_for_status("http://127.0.0.1:3004/forwarding-requests", 200).await;
     wait_for_status("http://127.0.0.1:4012/metrics", 200).await;
 
+    let dest_domain = 1234u32;
+    let dest_recipient = "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+    let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
+    let metrics_forward_addr =
+        derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
+
     let create_req = forwarding_relayer::CreateForwardingRequest {
-        forward_addr: "celestia1metrics".to_string(),
-        dest_domain: 1234,
-        dest_recipient: "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-            .to_string(),
-        token_id: "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131".to_string(),
+        forward_addr: metrics_forward_addr.clone(),
+        dest_domain,
+        dest_recipient: dest_recipient.to_string(),
+        token_id: token_id.to_string(),
     };
 
     let response = client
@@ -292,7 +313,10 @@ async fn test_backend_metrics_endpoint() {
     assert!(metrics_after_create.contains("oldest_pending_request_age_seconds"));
 
     let response = client
-        .delete("http://127.0.0.1:3004/forwarding-requests/celestia1metrics")
+        .delete(format!(
+            "http://127.0.0.1:3004/forwarding-requests/{}",
+            metrics_forward_addr
+        ))
         .send()
         .await
         .unwrap();

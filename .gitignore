@@ -10,3 +10,6 @@
 
 # Build artifacts
 hyperlane/hyp
+
+# Claude Code local settings
+.claude/
