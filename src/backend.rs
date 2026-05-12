@@ -423,6 +423,38 @@ async fn create_request(
     State(state): State<BackendState>,
     Json(create_req): Json<CreateForwardingRequest>,
 ) -> impl IntoResponse {
+    match derive_forwarding_address(
+        create_req.dest_domain,
+        &create_req.dest_recipient,
+        &create_req.token_id,
+    ) {
+        Ok(derived) if derived == create_req.forward_addr => {}
+        Ok(derived) => {
+            if state.metrics_enabled() {
+                counter!("requests_created_total", "result" => "address_mismatch").increment(1);
+            }
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "forward_addr does not match derivation from dest_domain/dest_recipient/token_id",
+                    "expected": derived,
+                    "got": create_req.forward_addr,
+                })),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            if state.metrics_enabled() {
+                counter!("requests_created_total", "result" => "invalid_params").increment(1);
+            }
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    }
+
     match state.create_request(create_req) {
         Ok((request, created)) => {
             if state.metrics_enabled() {
