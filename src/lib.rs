@@ -16,7 +16,7 @@ pub use backend::{
     PendingRequestMetricsSnapshot,
 };
 pub use metrics::{init_metrics_exporter, metrics_enabled, render_metrics};
-pub use relayer::{balances_equal, parse_metric_amount, Relayer, RelayerConfig};
+pub use relayer::{balances_equal, parse_metric_amount, retry_delay, Relayer, RelayerConfig};
 
 /// Forwarding relayer CLI
 #[derive(Parser, Debug)]

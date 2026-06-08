@@ -1,4 +1,30 @@
-use forwarding_relayer::{balances_equal, derive_forwarding_address, Balance};
+use forwarding_relayer::{balances_equal, derive_forwarding_address, retry_delay, Balance};
+use std::time::Duration;
+
+#[test]
+fn test_retry_delay_schedule() {
+    // Backoff grows 30s -> 1m -> 5m -> 30m -> 60m as failures accumulate.
+    assert_eq!(retry_delay(1), Duration::from_secs(30));
+    assert_eq!(retry_delay(2), Duration::from_secs(60));
+    assert_eq!(retry_delay(3), Duration::from_secs(300));
+    assert_eq!(retry_delay(4), Duration::from_secs(1800));
+    assert_eq!(retry_delay(5), Duration::from_secs(3600));
+}
+
+#[test]
+fn test_retry_delay_saturates_at_one_hour() {
+    // Beyond the schedule, every further attempt waits the 1-hour cap,
+    // regardless of how high the failure count climbs.
+    assert_eq!(retry_delay(6), Duration::from_secs(3600));
+    assert_eq!(retry_delay(100), Duration::from_secs(3600));
+    assert_eq!(retry_delay(u32::MAX), Duration::from_secs(3600));
+}
+
+#[test]
+fn test_retry_delay_zero_failures_defensive() {
+    // failures should always be >= 1 in practice; guard against underflow.
+    assert_eq!(retry_delay(0), Duration::from_secs(30));
+}
 
 #[test]
 fn test_derive_forwarding_address_default() {

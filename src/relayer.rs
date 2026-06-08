@@ -1,12 +1,145 @@
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use clap::Parser;
 use metrics::{counter, gauge};
 use reqwest::Client as HttpClient;
+use rusqlite::{params, Connection};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use crate::client::CelestiaClient;
 use crate::{Balance, ForwardingRequest};
+
+/// Per-request retry backoff schedule (seconds) applied after a failed submission.
+/// After exhausting the schedule, the final value (1 hour) is reused for every
+/// subsequent attempt until the request is dropped for exceeding its max age.
+const RETRY_BACKOFF_SCHEDULE_SECONDS: [u64; 5] = [30, 60, 300, 1800, 3600];
+
+/// Returns the delay to wait before the next submission attempt, given how many
+/// submissions have already failed for a request (`failures` >= 1). The delay
+/// follows [`RETRY_BACKOFF_SCHEDULE_SECONDS`] and saturates at its last entry
+/// (1 hour), independent of the configured max request age.
+pub fn retry_delay(failures: u32) -> Duration {
+    let idx = (failures.saturating_sub(1) as usize).min(RETRY_BACKOFF_SCHEDULE_SECONDS.len() - 1);
+    Duration::from_secs(RETRY_BACKOFF_SCHEDULE_SECONDS[idx])
+}
+
+/// Tracks submission backoff for a single forwarding request.
+struct RetryState {
+    /// Number of failed submission attempts so far.
+    failures: u32,
+    /// Wall-clock time before which the next submission attempt must not happen.
+    /// Wall-clock (not a monotonic `Instant`) so it can be persisted and is
+    /// still meaningful after a relayer restart.
+    next_attempt: DateTime<Utc>,
+}
+
+/// SQLite-backed persistence for per-request submission backoff, so retry
+/// progress survives a relayer crash or restart instead of resetting to an
+/// immediate re-attempt for every pending request.
+struct RetryStore {
+    conn: Connection,
+}
+
+impl RetryStore {
+    /// Open (creating if needed) the retry-state database.
+    fn new(db_path: &Path) -> Result<Self> {
+        if let Some(parent) = db_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory {:?}", parent))?;
+            }
+        }
+
+        let conn = Connection::open(db_path)
+            .with_context(|| format!("Failed to open retry-state DB at {:?}", db_path))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS retry_state (
+                forward_addr    TEXT PRIMARY KEY,
+                failures        INTEGER NOT NULL,
+                next_attempt_at TEXT NOT NULL
+            )",
+            [],
+        )
+        .context("Failed to create retry_state table")?;
+
+        info!("Opened relayer retry-state database at {:?}", db_path);
+
+        Ok(Self { conn })
+    }
+
+    /// Load all persisted backoff state, skipping rows that fail to parse.
+    fn load(&self) -> Result<HashMap<String, RetryState>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT forward_addr, failures, next_attempt_at FROM retry_state")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+
+        let mut map = HashMap::new();
+        for row in rows {
+            let (addr, failures, next_attempt_at) = row?;
+            match DateTime::parse_from_rfc3339(&next_attempt_at) {
+                Ok(ts) => {
+                    map.insert(
+                        addr,
+                        RetryState {
+                            failures: failures.max(0) as u32,
+                            next_attempt: ts.with_timezone(&Utc),
+                        },
+                    );
+                }
+                Err(e) => warn!("Skipping unparseable retry-state row for {}: {}", addr, e),
+            }
+        }
+        Ok(map)
+    }
+
+    /// Insert or update the backoff state for an address.
+    fn upsert(&self, addr: &str, state: &RetryState) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO retry_state (forward_addr, failures, next_attempt_at)
+                 VALUES (?1, ?2, ?3)",
+                params![addr, state.failures as i64, state.next_attempt.to_rfc3339()],
+            )
+            .with_context(|| format!("Failed to persist retry state for {}", addr))?;
+        Ok(())
+    }
+
+    /// Delete the backoff state for an address (e.g. on success or drop).
+    fn remove(&self, addr: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "DELETE FROM retry_state WHERE forward_addr = ?1",
+                params![addr],
+            )
+            .with_context(|| format!("Failed to delete retry state for {}", addr))?;
+        Ok(())
+    }
+
+    /// Delete persisted state for any address not in `active` (no longer pending).
+    fn retain(&self, active: &HashSet<&str>) -> Result<()> {
+        let mut stmt = self.conn.prepare("SELECT forward_addr FROM retry_state")?;
+        let addrs: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        for addr in addrs {
+            if !active.contains(addr.as_str()) {
+                self.remove(&addr)?;
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Compare two balance lists for equality (order-independent).
 pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
@@ -47,6 +180,16 @@ pub struct RelayerConfig {
     #[arg(long, env = "MAX_REQUEST_AGE_SECONDS", default_value = "86400")]
     pub max_request_age_seconds: u64,
 
+    /// Path to the relayer's retry-state database, which persists submission
+    /// backoff across restarts so a crash does not reset every request to an
+    /// immediate re-attempt
+    #[arg(
+        long,
+        env = "RETRY_STATE_DB_PATH",
+        default_value = "storage/relayer-retry.db"
+    )]
+    pub retry_state_db_path: PathBuf,
+
     /// Metrics port for Prometheus scraping
     #[arg(long, env = "RELAYER_METRICS_PORT")]
     pub metrics_port: Option<u16>,
@@ -57,6 +200,11 @@ pub struct Relayer {
     config: RelayerConfig,
     celestia: CelestiaClient,
     http_client: HttpClient,
+    /// In-memory cache of per-request submission backoff, keyed by forward
+    /// address. Mirrored to `retry_store` so it survives restarts.
+    retry_state: HashMap<String, RetryState>,
+    /// Durable backing store for `retry_state`.
+    retry_store: RetryStore,
 }
 
 impl Relayer {
@@ -72,10 +220,19 @@ impl Relayer {
             .build()
             .context("Failed to build HTTP client")?;
 
+        let retry_store = RetryStore::new(&config.retry_state_db_path)?;
+        let retry_state = retry_store.load().unwrap_or_else(|e| {
+            warn!("Failed to load persisted retry state, starting fresh: {:#}", e);
+            HashMap::new()
+        });
+        info!("Loaded {} persisted retry-state entries", retry_state.len());
+
         Ok(Self {
             config,
             celestia,
             http_client,
+            retry_state,
+            retry_store,
         })
     }
 
@@ -126,13 +283,22 @@ impl Relayer {
         debug!("Processing {} forwarding requests", requests.len());
 
         // Process each forwarding request
-        for request in requests {
-            if let Err(e) = self.process_forwarding_request(&request).await {
+        for request in &requests {
+            if let Err(e) = self.process_forwarding_request(request).await {
                 error!(
                     "Error processing forwarding request for {}: {:#}",
                     request.forward_addr, e
                 );
             }
+        }
+
+        // Drop backoff state for requests no longer pending (completed, dropped,
+        // or removed out-of-band) so the map cannot grow without bound.
+        let active: HashSet<&str> = requests.iter().map(|r| r.forward_addr.as_str()).collect();
+        self.retry_state
+            .retain(|addr, _| active.contains(addr.as_str()));
+        if let Err(e) = self.retry_store.retain(&active) {
+            warn!("Failed to prune persisted retry state: {:#}", e);
         }
 
         Ok(())
@@ -145,6 +311,7 @@ impl Relayer {
 
         // Drop requests that have outlived the configured max age
         if let Some(age) = self.expired_age(request) {
+            self.clear_retry_state(forward_addr);
             match self.complete_request(forward_addr).await {
                 Ok(_) => warn!(
                     "Dropped dead request: forward_addr={} dest_domain={} dest_recipient={} token_id={} created_at={} age={}s",
@@ -158,6 +325,26 @@ impl Relayer {
                 Err(e) => warn!("Failed to drop dead request for {}: {:#}", forward_addr, e),
             }
             return Ok(());
+        }
+
+        // Honor submission backoff: skip the request entirely (no gRPC work, no
+        // tx) while it is still within the wait window from a prior failure.
+        if let Some(state) = self.retry_state.get(forward_addr) {
+            let now = Utc::now();
+            if now < state.next_attempt {
+                let wait = (state.next_attempt - now).num_seconds().max(0);
+                counter!(
+                    "forwarding_requests_processed_total",
+                    "status" => "backoff",
+                    "dest_domain" => dest_domain.clone()
+                )
+                .increment(1);
+                debug!(
+                    "Backing off {} (failures={}, retry in ~{}s)",
+                    forward_addr, state.failures, wait
+                );
+                return Ok(());
+            }
         }
 
         debug!("Checking balance at {}", forward_addr);
@@ -226,6 +413,9 @@ impl Relayer {
                 .increment(1);
                 info!("Forwarding successful: tx_hash={}", tx_hash);
 
+                // Successful submission clears any accumulated backoff.
+                self.clear_retry_state(forward_addr);
+
                 if let Err(e) = self.complete_request(forward_addr).await {
                     warn!(
                         "Failed to remove backend request for {}: {:#}",
@@ -246,7 +436,34 @@ impl Relayer {
                     "dest_domain" => dest_domain
                 )
                 .increment(1);
-                error!("Failed to submit forwarding for {}: {:#}", forward_addr, e);
+
+                // Advance the backoff so the next attempt is delayed; the delay
+                // grows per the schedule and saturates at 1 hour, while the
+                // max-age check above still drops the request once it expires.
+                let failures = self
+                    .retry_state
+                    .get(forward_addr)
+                    .map_or(0, |s| s.failures)
+                    + 1;
+                let delay = retry_delay(failures);
+                let next_attempt = Utc::now()
+                    + chrono::Duration::from_std(delay)
+                        .unwrap_or_else(|_| chrono::Duration::seconds(3600));
+                let state = RetryState {
+                    failures,
+                    next_attempt,
+                };
+                if let Err(e) = self.retry_store.upsert(forward_addr, &state) {
+                    warn!("Failed to persist retry state for {}: {:#}", forward_addr, e);
+                }
+                self.retry_state.insert(forward_addr.to_string(), state);
+                error!(
+                    "Failed to submit forwarding for {}: {:#} (failure #{}, next retry in {}s)",
+                    forward_addr,
+                    e,
+                    failures,
+                    delay.as_secs()
+                );
             }
         }
 
@@ -319,6 +536,18 @@ impl Relayer {
         }
 
         Ok(())
+    }
+
+    /// Clear any backoff state for an address from both the in-memory cache and
+    /// the durable store (on successful submission or when dropping the request).
+    fn clear_retry_state(&mut self, forward_addr: &str) {
+        self.retry_state.remove(forward_addr);
+        if let Err(e) = self.retry_store.remove(forward_addr) {
+            warn!(
+                "Failed to clear persisted retry state for {}: {:#}",
+                forward_addr, e
+            );
+        }
     }
 
     /// Returns the age in seconds if `request` has exceeded `max_request_age_seconds`.
