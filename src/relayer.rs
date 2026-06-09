@@ -222,7 +222,10 @@ impl Relayer {
 
         let retry_store = RetryStore::new(&config.retry_state_db_path)?;
         let retry_state = retry_store.load().unwrap_or_else(|e| {
-            warn!("Failed to load persisted retry state, starting fresh: {:#}", e);
+            warn!(
+                "Failed to load persisted retry state, starting fresh: {:#}",
+                e
+            );
             HashMap::new()
         });
         info!("Loaded {} persisted retry-state entries", retry_state.len());
@@ -440,11 +443,7 @@ impl Relayer {
                 // Advance the backoff so the next attempt is delayed; the delay
                 // grows per the schedule and saturates at 1 hour, while the
                 // max-age check above still drops the request once it expires.
-                let failures = self
-                    .retry_state
-                    .get(forward_addr)
-                    .map_or(0, |s| s.failures)
-                    + 1;
+                let failures = self.retry_state.get(forward_addr).map_or(0, |s| s.failures) + 1;
                 let delay = retry_delay(failures);
                 let next_attempt = Utc::now()
                     + chrono::Duration::from_std(delay)
@@ -454,7 +453,10 @@ impl Relayer {
                     next_attempt,
                 };
                 if let Err(e) = self.retry_store.upsert(forward_addr, &state) {
-                    warn!("Failed to persist retry state for {}: {:#}", forward_addr, e);
+                    warn!(
+                        "Failed to persist retry state for {}: {:#}",
+                        forward_addr, e
+                    );
                 }
                 self.retry_state.insert(forward_addr.to_string(), state);
                 error!(
