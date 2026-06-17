@@ -17,6 +17,7 @@ celestia-proto = { git = "https://github.com/celestiaorg/lumina.git", rev = "7d3
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive", "env"] }
 cosmrs = { version = "0.19", features = ["cosmwasm", "rpc", "grpc"] }
+futures = "0.3"
 hex = "0.4"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
@@ -27,6 +28,8 @@ rusqlite = { version = "0.38.0", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+tendermint = "0.39"
+tendermint-rpc = { version = "0.39", features = ["http-client", "websocket-client"] }
 tokio = { version = "1.42", features = ["full"] }
 tonic = "0.13"
 tower = "0.5"
