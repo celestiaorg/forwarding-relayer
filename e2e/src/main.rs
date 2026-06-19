@@ -16,6 +16,7 @@ const RECIPIENT_A: &str = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
 const RECIPIENT_B: &str = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 const RECIPIENT_C: &str = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 const RECIPIENT_D: &str = "0x90F79bf6EB2c4f870365E785982E1f101E93b906";
+const RECIPIENT_E: &str = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65";
 
 #[derive(Debug, serde::Deserialize)]
 struct WarpRouteConfig {
@@ -174,6 +175,10 @@ async fn main() -> Result<()> {
     run!(
         "D: restart catch-up (crash + deposit while down)",
         scenario_restart_catch_up(&ctx)
+    );
+    run!(
+        "E: rapid back-to-back deposits (no lost triggers)",
+        scenario_rapid_back_to_back(&ctx)
     );
 
     info!("\n========== E2E Summary ==========");
@@ -334,6 +339,38 @@ async fn scenario_restart_catch_up(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
+/// Scenario E: fire several deposits in quick succession so later ones land while
+/// an earlier forward is still in flight. Every deposit must still be forwarded —
+/// none dropped by the in-flight dedup — so the recipient ends up with the full
+/// total. Exercises the dirty-marker re-enqueue path.
+async fn scenario_rapid_back_to_back(ctx: &Ctx) -> Result<()> {
+    const DEPOSITS: u64 = 3;
+    let (dest_recipient, forward_addr) = derive(ctx, RECIPIENT_E)?;
+    let baseline = ctx.erc20_balance(RECIPIENT_E).await?;
+
+    ctx.register(&forward_addr, &dest_recipient).await?;
+    tokio::time::sleep(ctx.maintenance_interval + Duration::from_secs(3)).await;
+
+    // Send deposits back-to-back. We wait only long enough between funding txs for
+    // each to commit (so the sender's account sequence advances) — far less than a
+    // full relay — so later deposits arrive mid-forward of earlier ones.
+    for i in 1..=DEPOSITS {
+        info!("Rapid deposit {i}/{DEPOSITS} -> {forward_addr}");
+        fund_celestia_account(&forward_addr, ctx.fund_amount)?;
+        tokio::time::sleep(Duration::from_secs(4)).await;
+    }
+
+    let target = baseline + U256::from(ctx.fund_amount * DEPOSITS);
+    ctx.wait_for_at_least(
+        RECIPIENT_E,
+        target,
+        ctx.relay_timeout + ctx.maintenance_interval,
+    )
+    .await
+    .context("not all rapid back-to-back deposits were relayed")?;
+    Ok(())
+}
+
 impl Ctx {
     /// POST a forwarding request. Returns true if a new request was created (201),
     /// false if an existing one was returned (200).
@@ -409,6 +446,44 @@ impl Ctx {
         }
         anyhow::bail!(
             "balance for {recipient} did not increase above {baseline} within {}s",
+            timeout.as_secs()
+        )
+    }
+
+    /// Poll the recipient's wTIA balance until it reaches at least `target` or the
+    /// timeout elapses. Used to assert that *every* deposit was forwarded.
+    async fn wait_for_at_least(
+        &self,
+        recipient: &str,
+        target: U256,
+        timeout: Duration,
+    ) -> Result<U256> {
+        let poll_interval = Duration::from_secs(5);
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            tokio::time::sleep(poll_interval).await;
+            match self.erc20_balance(recipient).await {
+                Ok(balance) if balance >= target => {
+                    info!(
+                        "Balance reached target after {}s: {} (>= {})",
+                        start.elapsed().as_secs(),
+                        balance,
+                        target
+                    );
+                    return Ok(balance);
+                }
+                Ok(balance) => info!(
+                    "  Polling... ({}s/{}s) balance={} target={}",
+                    start.elapsed().as_secs(),
+                    timeout.as_secs(),
+                    balance,
+                    target
+                ),
+                Err(e) => warn!("Failed to query balance: {e:#}"),
+            }
+        }
+        anyhow::bail!(
+            "balance for {recipient} did not reach {target} within {}s",
             timeout.as_secs()
         )
     }

@@ -22,7 +22,7 @@ use tendermint_rpc::endpoint::block_results;
 use tendermint_rpc::event::EventData;
 use tendermint_rpc::query::{EventType, Query};
 use tendermint_rpc::{Client, HttpClient, SubscriptionClient, WebSocketClient};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, warn};
 
 use crate::relayer::RetryStore;
@@ -155,7 +155,7 @@ pub(crate) async fn run_block_scanner(
     start_height: Option<u64>,
     live: LiveSet,
     store: Arc<Mutex<RetryStore>>,
-    deposits_tx: UnboundedSender<String>,
+    deposits_tx: Sender<String>,
 ) -> Result<()> {
     let http = HttpClient::new(rpc_url.as_str())
         .with_context(|| format!("Invalid CometBFT RPC URL: {rpc_url}"))?;
@@ -206,7 +206,7 @@ async fn scan_session(
     cursor: &mut u64,
     live: &LiveSet,
     store: &Arc<Mutex<RetryStore>>,
-    deposits_tx: &UnboundedSender<String>,
+    deposits_tx: &Sender<String>,
 ) -> Result<()> {
     let (ws, driver) = WebSocketClient::new(ws_url)
         .await
@@ -246,7 +246,7 @@ async fn scan_to(
     target: u64,
     live: &LiveSet,
     store: &Arc<Mutex<RetryStore>>,
-    deposits_tx: &UnboundedSender<String>,
+    deposits_tx: &Sender<String>,
 ) -> Result<()> {
     while *cursor < target {
         let height = *cursor + 1;
@@ -256,20 +256,25 @@ async fn scan_to(
             .await
             .with_context(|| format!("Failed to fetch block_results for height {height}"))?;
 
-        let deposits = extract_deposits(&results);
-        if !deposits.is_empty() {
+        // Collect the watched recipients while holding the lock, then release it
+        // before sending (the bounded channel's send is async and must not be
+        // awaited while holding the std mutex).
+        let matched: Vec<String> = {
             let live = live.lock().unwrap();
-            for deposit in deposits {
-                if live.contains_key(&deposit.recipient) {
-                    counter!("relayer_deposits_detected_total").increment(1);
-                    debug!(
-                        "Deposit detected at height {height} for watched address {}",
-                        deposit.recipient
-                    );
-                    // The dispatcher dedupes; a closed receiver only happens on shutdown.
-                    let _ = deposits_tx.send(deposit.recipient);
-                }
-            }
+            extract_deposits(&results)
+                .into_iter()
+                .filter(|deposit| live.contains_key(&deposit.recipient))
+                .map(|deposit| deposit.recipient)
+                .collect()
+        };
+        for recipient in matched {
+            counter!("relayer_deposits_detected_total").increment(1);
+            debug!("Deposit detected at height {height} for watched address {recipient}");
+            // Awaiting here applies backpressure: if the channel is full the scanner
+            // pauses (and the cursor isn't advanced past this block) until the
+            // dispatcher drains, rather than buffering without bound. A closed
+            // receiver only happens on shutdown.
+            let _ = deposits_tx.send(recipient).await;
         }
 
         *cursor = height;

@@ -325,6 +325,11 @@ pub struct RelayerConfig {
 /// same destination, so a busy domain isn't re-quoted on every forward).
 const FEE_CACHE_TTL: Duration = Duration::from_secs(60);
 
+/// Capacity of the forward-trigger channel. Generous (entries are ~tiny address
+/// strings) but bounded, so a producer burst applies backpressure rather than
+/// growing memory without limit.
+const FORWARD_QUEUE_CAPACITY: usize = 10_000;
+
 /// IGP fee quote cache: (dest_domain, token_id) -> (quoted fee, fetched-at).
 type FeeCache = Arc<Mutex<HashMap<(u32, String), (f64, Instant)>>>;
 
@@ -332,7 +337,7 @@ type FeeCache = Arc<Mutex<HashMap<(u32, String), (f64, Instant)>>>;
 /// maintenance, and forward-worker tasks. Each `Mutex` guards a short, non-async
 /// critical section only — locks are never held across an `.await`.
 #[derive(Clone)]
-struct Shared {
+struct RelayerState {
     config: Arc<RelayerConfig>,
     celestia: Arc<CelestiaClient>,
     http_client: HttpClient,
@@ -353,7 +358,7 @@ struct Shared {
     store: Arc<Mutex<RetryStore>>,
 }
 
-impl Shared {
+impl RelayerState {
     /// Record activity (a deposit or successful forward) for an address now,
     /// updating both the in-memory cache and the durable store.
     fn record_activity(&self, forward_addr: &str) {
@@ -395,9 +400,11 @@ impl Shared {
         }
     }
 
-    /// Advance submission backoff after a failed submit, persisting the new state.
-    /// Returns the scheduled delay for logging.
-    fn note_submit_failure(&self, forward_addr: &str) -> Duration {
+    /// Advance exponential backoff after any failed forward attempt (balance query,
+    /// fee query, or submission), persisting the new state so the maintenance
+    /// retry-due sweep re-enqueues the address once the delay elapses. Returns the
+    /// scheduled delay for logging.
+    fn note_failure(&self, forward_addr: &str) -> Duration {
         let failures = self
             .retry_state
             .lock()
@@ -477,7 +484,7 @@ impl Shared {
 
 /// Relayer entry point. Owns the shared state and spawns the worker tasks.
 pub struct Relayer {
-    shared: Shared,
+    shared: RelayerState,
 }
 
 impl Relayer {
@@ -516,7 +523,7 @@ impl Relayer {
         );
 
         Ok(Self {
-            shared: Shared {
+            shared: RelayerState {
                 config: Arc::new(config),
                 celestia: Arc::new(celestia),
                 http_client,
@@ -540,8 +547,10 @@ impl Relayer {
 
         // Channel of addresses to (re)attempt a forward for: fed by the scanner
         // (detected deposits), the maintenance ticker (initial probes, retry-due),
-        // and consumed by the bounded-concurrency dispatcher.
-        let (deposits_tx, deposits_rx) = mpsc::unbounded_channel::<String>();
+        // and consumed by the bounded-concurrency dispatcher. Bounded so a producer
+        // burst (e.g. a large restart catch-up) applies backpressure instead of
+        // buffering without limit; producers block (batch) once it is full.
+        let (deposits_tx, deposits_rx) = mpsc::channel::<String>(FORWARD_QUEUE_CAPACITY);
 
         // Signer-balance metrics loop.
         {
@@ -584,7 +593,7 @@ impl Relayer {
         }
 
         // Forward-worker dispatcher (runs on this task to keep the process alive).
-        run_dispatcher(shared, deposits_rx).await;
+        run_dispatcher(shared, deposits_tx, deposits_rx).await;
         Ok(())
     }
 }
@@ -592,13 +601,26 @@ impl Relayer {
 /// Consume triggered addresses and run forwards with bounded concurrency,
 /// deduplicating addresses already in flight so the same balance isn't
 /// double-submitted concurrently.
-async fn run_dispatcher(shared: Shared, mut deposits_rx: mpsc::UnboundedReceiver<String>) {
+async fn run_dispatcher(
+    shared: RelayerState,
+    deposits_tx: mpsc::Sender<String>,
+    mut deposits_rx: mpsc::Receiver<String>,
+) {
     let semaphore = Arc::new(Semaphore::new(shared.config.forward_concurrency.max(1)));
-    let in_flight: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    // addr -> dirty. Presence means a forward is in flight; `dirty` means another
+    // trigger arrived while it was processing, so the address must be re-run once
+    // it finishes (a deposit that lands mid-forward must not be lost — the scanner
+    // won't re-emit it and there is no periodic poll).
+    let in_flight: Arc<Mutex<HashMap<String, bool>>> = Arc::new(Mutex::new(HashMap::new()));
 
     while let Some(addr) = deposits_rx.recv().await {
-        if !in_flight.lock().unwrap().insert(addr.clone()) {
-            continue; // already being processed
+        {
+            let mut guard = in_flight.lock().unwrap();
+            if let Some(dirty) = guard.get_mut(&addr) {
+                *dirty = true; // already processing; mark for one re-run afterwards
+                continue;
+            }
+            guard.insert(addr.clone(), false);
         }
         let permit = match semaphore.clone().acquire_owned().await {
             Ok(permit) => permit,
@@ -606,10 +628,19 @@ async fn run_dispatcher(shared: Shared, mut deposits_rx: mpsc::UnboundedReceiver
         };
         let shared = shared.clone();
         let in_flight = in_flight.clone();
+        let deposits_tx = deposits_tx.clone();
         tokio::spawn(async move {
-            let _permit = permit;
             forward_address(&shared, &addr).await;
-            in_flight.lock().unwrap().remove(&addr);
+            // Drop the in-flight entry; if a trigger arrived while we were
+            // processing, re-enqueue once so the new deposit is handled.
+            let requeue = matches!(in_flight.lock().unwrap().remove(&addr), Some(true));
+            // Release the concurrency slot before the (bounded, awaiting) re-enqueue
+            // so we can't deadlock against a full channel whose only consumer is
+            // this dispatcher.
+            drop(permit);
+            if requeue {
+                let _ = deposits_tx.send(addr).await;
+            }
         });
     }
 }
@@ -617,7 +648,7 @@ async fn run_dispatcher(shared: Shared, mut deposits_rx: mpsc::UnboundedReceiver
 /// Attempt a single forward for `forward_addr`: resolve its request, honor backoff,
 /// check the live balance, and submit. A successful submit forwards the full balance
 /// on-chain, so there is exactly one submit per trigger (no residual re-submit).
-async fn forward_address(shared: &Shared, forward_addr: &str) {
+async fn forward_address(shared: &RelayerState, forward_addr: &str) {
     let request = match shared.live.lock().unwrap().get(forward_addr).cloned() {
         Some(request) => request,
         None => {
@@ -650,7 +681,22 @@ async fn forward_address(shared: &Shared, forward_addr: &str) {
     let balances = match shared.celestia.query_balances(forward_addr).await {
         Ok(balances) => balances,
         Err(e) => {
-            error!("Balance query failed for {}: {:#}", forward_addr, e);
+            // A transient query failure must not strand the deposit: schedule a
+            // backoff retry (the scanner won't re-emit this deposit, and there is
+            // no periodic poll to fall back on).
+            counter!(
+                "forwarding_requests_processed_total",
+                "status" => "query_failed",
+                "dest_domain" => dest_domain
+            )
+            .increment(1);
+            let delay = shared.note_failure(forward_addr);
+            error!(
+                "Balance query failed for {} (next retry in {}s): {:#}",
+                forward_addr,
+                delay.as_secs(),
+                e
+            );
             return;
         }
     };
@@ -677,7 +723,23 @@ async fn forward_address(shared: &Shared, forward_addr: &str) {
 
     let max_igp_fee = match resolve_max_igp_fee(shared, &request, &dest_domain).await {
         Some(fee) => fee,
-        None => return,
+        None => {
+            // Same as a balance-query failure: retry with backoff rather than
+            // dropping the only trigger for this funded address.
+            counter!(
+                "forwarding_requests_processed_total",
+                "status" => "fee_failed",
+                "dest_domain" => dest_domain
+            )
+            .increment(1);
+            let delay = shared.note_failure(forward_addr);
+            warn!(
+                "IGP fee resolution failed for {} (next retry in {}s)",
+                forward_addr,
+                delay.as_secs()
+            );
+            return;
+        }
     };
 
     match shared
@@ -724,7 +786,7 @@ async fn forward_address(shared: &Shared, forward_addr: &str) {
                 "dest_domain" => dest_domain
             )
             .increment(1);
-            let delay = shared.note_submit_failure(forward_addr);
+            let delay = shared.note_failure(forward_addr);
             error!(
                 "Failed to submit forwarding for {}: {:#} (next retry in {}s)",
                 forward_addr,
@@ -739,7 +801,7 @@ async fn forward_address(shared: &Shared, forward_addr: &str) {
 /// with many addresses isn't re-quoted on every forward. Returns `None` only if the
 /// quote can't be parsed.
 async fn resolve_max_igp_fee(
-    shared: &Shared,
+    shared: &RelayerState,
     request: &ForwardingRequest,
     dest_domain_label: &str,
 ) -> Option<String> {
@@ -792,7 +854,7 @@ async fn resolve_max_igp_fee(
 
 /// Periodic maintenance: refresh the live list from the backend, retire expired
 /// addresses, prune state, probe newly-added addresses, and re-enqueue retries.
-async fn run_maintenance(shared: Shared, deposits_tx: mpsc::UnboundedSender<String>) {
+async fn run_maintenance(shared: RelayerState, deposits_tx: mpsc::Sender<String>) {
     let interval = Duration::from_secs(shared.config.maintenance_interval.max(1));
     loop {
         if let Err(e) = maintenance_tick(&shared, &deposits_tx).await {
@@ -802,10 +864,7 @@ async fn run_maintenance(shared: Shared, deposits_tx: mpsc::UnboundedSender<Stri
     }
 }
 
-async fn maintenance_tick(
-    shared: &Shared,
-    deposits_tx: &mpsc::UnboundedSender<String>,
-) -> Result<()> {
+async fn maintenance_tick(shared: &RelayerState, deposits_tx: &mpsc::Sender<String>) -> Result<()> {
     let requests = match shared.fetch_forwarding_requests().await {
         Ok(reqs) => {
             counter!("backend_request_fetch_total", "status" => "success").increment(1);
@@ -901,7 +960,7 @@ async fn maintenance_tick(
     // Probe newly-added addresses once (catches funds deposited before
     // registration, and on first run probes the entire restored live list).
     for addr in newly_added {
-        let _ = deposits_tx.send(addr);
+        let _ = deposits_tx.send(addr).await;
     }
 
     // Re-enqueue addresses whose backoff window has elapsed.
@@ -914,13 +973,13 @@ async fn maintenance_tick(
             .collect()
     };
     for addr in due {
-        let _ = deposits_tx.send(addr);
+        let _ = deposits_tx.send(addr).await;
     }
 
     Ok(())
 }
 
-async fn refresh_signer_balance_metrics(shared: &Shared) -> Result<()> {
+async fn refresh_signer_balance_metrics(shared: &RelayerState) -> Result<()> {
     let signer_address = shared.celestia.signer_address().to_string();
     let balances = shared.celestia.query_balances(&signer_address).await?;
     let utia_balance = balances
