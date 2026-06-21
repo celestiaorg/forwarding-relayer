@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
         Command::Relayer(config) => {
             forwarding_relayer::init_metrics_exporter(config.metrics_port)?;
             // Create and run relayer
-            let mut relayer = Relayer::new(config).await?;
+            let relayer = Relayer::new(config).await?;
             relayer.run().await
         }
         Command::Backend(config) => {

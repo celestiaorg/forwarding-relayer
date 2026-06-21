@@ -1,5 +1,57 @@
-use forwarding_relayer::{balances_equal, derive_forwarding_address, retry_delay, Balance};
+use chrono::{Duration as ChronoDuration, Utc};
+use forwarding_relayer::{
+    balances_equal, derive_forwarding_address, retirement_reason, retry_delay, Balance,
+    RetireReason,
+};
 use std::time::Duration;
+
+const ONE_DAY: u64 = 86_400;
+const SEVEN_DAYS: u64 = 604_800;
+
+#[test]
+fn test_retirement_never_active_within_age_kept() {
+    // A never-funded address younger than max_request_age_seconds is kept.
+    let now = Utc::now();
+    let created_at = (now - ChronoDuration::seconds(3600)).to_rfc3339();
+    assert_eq!(
+        retirement_reason(&created_at, None, now, ONE_DAY, SEVEN_DAYS),
+        None
+    );
+}
+
+#[test]
+fn test_retirement_never_active_past_age_unfunded() {
+    // A never-funded address older than max_request_age_seconds is retired as unfunded.
+    let now = Utc::now();
+    let created_at = (now - ChronoDuration::seconds(ONE_DAY as i64 + 60)).to_rfc3339();
+    let reason = retirement_reason(&created_at, None, now, ONE_DAY, SEVEN_DAYS);
+    assert!(matches!(reason, Some(RetireReason::Unfunded { .. })));
+    assert_eq!(reason.unwrap().label(), "unfunded");
+}
+
+#[test]
+fn test_retirement_active_recently_kept() {
+    // An active address that saw activity recently is kept, even if it is old
+    // (the inactivity timer, not the 1-day age, governs active addresses).
+    let now = Utc::now();
+    let created_at = (now - ChronoDuration::days(30)).to_rfc3339();
+    let last_activity = Some(now - ChronoDuration::seconds(3600));
+    assert_eq!(
+        retirement_reason(&created_at, last_activity, now, ONE_DAY, SEVEN_DAYS),
+        None
+    );
+}
+
+#[test]
+fn test_retirement_active_idle_past_inactivity() {
+    // An active address idle past max_address_inactivity_seconds is retired as inactive.
+    let now = Utc::now();
+    let created_at = (now - ChronoDuration::days(30)).to_rfc3339();
+    let last_activity = Some(now - ChronoDuration::seconds(SEVEN_DAYS as i64 + 60));
+    let reason = retirement_reason(&created_at, last_activity, now, ONE_DAY, SEVEN_DAYS);
+    assert!(matches!(reason, Some(RetireReason::Inactive { .. })));
+    assert_eq!(reason.unwrap().label(), "inactive");
+}
 
 #[test]
 fn test_retry_delay_schedule() {

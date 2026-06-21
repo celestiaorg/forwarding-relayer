@@ -1,6 +1,6 @@
 services:
   celestia-init:
-    image: ghcr.io/celestiaorg/celestia-app-standalone:v8.0.1-mocha
+    image: ghcr.io/celestiaorg/celestia-app-standalone:v9.0.4-mocha
     container_name: celestia-init
     entrypoint: /scripts/init.sh
     volumes:
@@ -9,7 +9,7 @@ services:
     restart: "no"
 
   celestia-validator:
-    image: ghcr.io/celestiaorg/celestia-app-standalone:v8.0.1-mocha
+    image: ghcr.io/celestiaorg/celestia-app-standalone:v9.0.4-mocha
     container_name: celestia-validator
     ports:
       - "26656:26656"
@@ -132,10 +132,16 @@ services:
       - "9092:9092"
     environment:
       - CELESTIA_GRPC=http://celestia-validator:9090
+      - CELESTIA_RPC=http://celestia-validator:26657
       - BACKEND_URL=http://forwarding-backend:8080
       - PRIVATE_KEY_HEX=6e30efb1d3ebd30d1ba08c8d5fc9b190e08394009dc1dd787a69e60c33288a8c
       - POLL_INTERVAL=6
       - IGP_FEE_BUFFER=1.1
+      # E2E-tuned retention windows (production defaults are 86400 / 604800):
+      # drop never-funded addresses after 5 min, retire inactive ones after 10 min.
+      - MAX_REQUEST_AGE_SECONDS=300
+      - MAX_ADDRESS_INACTIVITY_SECONDS=600
+      - MAINTENANCE_INTERVAL=15
       - RELAYER_METRICS_PORT=9092
     volumes:
       - forwarding-relayer-data:/app/storage

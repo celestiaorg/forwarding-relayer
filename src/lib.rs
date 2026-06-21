@@ -9,6 +9,7 @@ mod client;
 mod metrics;
 mod proto;
 mod relayer;
+mod scanner;
 
 // Re-export public types from modules
 pub use backend::{
@@ -16,7 +17,11 @@ pub use backend::{
     PendingRequestMetricsSnapshot,
 };
 pub use metrics::{init_metrics_exporter, metrics_enabled, render_metrics};
-pub use relayer::{balances_equal, parse_metric_amount, retry_delay, Relayer, RelayerConfig};
+pub use relayer::{
+    balances_equal, parse_metric_amount, retirement_reason, retry_delay, Relayer, RelayerConfig,
+    RetireReason,
+};
+pub use scanner::{extract_deposits, Deposit};
 
 /// Forwarding relayer CLI
 #[derive(Parser, Debug)]
@@ -73,7 +78,7 @@ pub struct CreateForwardingRequest {
 }
 
 /// Token balance
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Balance {
     pub denom: String,
     pub amount: String,
