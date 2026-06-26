@@ -105,14 +105,16 @@ impl RateLimiter {
             .with_context(|| format!("Failed to read rate-limit config at {:?}", path))?;
         let config: RateLimitFileConfig = serde_json::from_str(&contents)
             .with_context(|| format!("Failed to parse rate-limit config at {:?}", path))?;
-        Ok(Self::from_config(config))
+        Self::from_config(config)
     }
 
     /// Build a limiter from parsed config, resolving each App's hostnames to IPs.
     ///
-    /// Resolution failures are logged and skipped rather than aborting startup; an
-    /// unresolved host simply falls back to the default budget.
-    pub fn from_config(config: RateLimitFileConfig) -> Self {
+    /// Any host that fails to resolve, or resolves to no addresses, aborts the
+    /// build: a whitelist that cannot be loaded in full is a configuration error,
+    /// and silently falling back to the default budget would lock the affected App
+    /// down without warning.
+    pub fn from_config(config: RateLimitFileConfig) -> Result<Self> {
         let mut overrides: HashMap<IpAddr, u32> = HashMap::new();
 
         for app in &config.apps {
@@ -120,26 +122,28 @@ impl RateLimiter {
                 .per_minute
                 .unwrap_or(config.whitelist_default_per_minute);
             for host in &app.hosts {
-                match resolve_host(host) {
-                    Ok(ips) if ips.is_empty() => {
-                        warn!(app = %app.name, host = %host, "Rate-limit host resolved to no addresses; skipping");
-                    }
-                    Ok(ips) => {
-                        for ip in ips {
-                            if let Some(existing) = overrides.insert(ip, budget) {
-                                if existing != budget {
-                                    warn!(
-                                        app = %app.name, %ip, existing, new = budget,
-                                        "Rate-limit IP listed by multiple Apps with different budgets; using the later one"
-                                    );
-                                }
-                            }
-                            info!(app = %app.name, %ip, per_minute = budget, "Whitelisted rate-limit host");
+                let ips = resolve_host(host).with_context(|| {
+                    format!(
+                        "Failed to resolve rate-limit host {host:?} for app {:?}",
+                        app.name
+                    )
+                })?;
+                if ips.is_empty() {
+                    anyhow::bail!(
+                        "Rate-limit host {host:?} for app {:?} resolved to no addresses",
+                        app.name
+                    );
+                }
+                for ip in ips {
+                    if let Some(existing) = overrides.insert(ip, budget) {
+                        if existing != budget {
+                            warn!(
+                                app = %app.name, %ip, existing, new = budget,
+                                "Rate-limit IP listed by multiple Apps with different budgets; using the later one"
+                            );
                         }
                     }
-                    Err(err) => {
-                        warn!(app = %app.name, host = %host, "Failed to resolve rate-limit host: {err:#}; it will use the default budget");
-                    }
+                    info!(app = %app.name, %ip, per_minute = budget, "Whitelisted rate-limit host");
                 }
             }
         }
@@ -150,11 +154,11 @@ impl RateLimiter {
             "Rate limiting enabled"
         );
 
-        Self {
+        Ok(Self {
             default_per_minute: config.default_per_minute,
             overrides,
             buckets: Mutex::new(HashMap::new()),
-        }
+        })
     }
 
     /// The per-minute budget that applies to `ip`.
@@ -366,8 +370,22 @@ mod tests {
                 per_minute: None,
             }],
         };
-        let rl = RateLimiter::from_config(config);
+        let rl = RateLimiter::from_config(config).unwrap();
         assert_eq!(rl.budget_for(ip(7)), 6000);
         assert_eq!(rl.budget_for(ip(8)), 1);
+    }
+
+    #[test]
+    fn from_config_errors_on_unresolvable_host() {
+        let config = RateLimitFileConfig {
+            default_per_minute: 1,
+            whitelist_default_per_minute: 6000,
+            apps: vec![AppConfig {
+                name: "app".to_string(),
+                hosts: vec!["this-host-does-not-exist.invalid".to_string()],
+                per_minute: None,
+            }],
+        };
+        assert!(RateLimiter::from_config(config).is_err());
     }
 }
