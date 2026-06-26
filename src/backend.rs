@@ -1,14 +1,16 @@
 use anyhow::{Context, Result};
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
-    response::IntoResponse,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{Method, Request, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{delete, get},
     Json, Router,
 };
 use clap::Parser;
 use metrics::{counter, gauge};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::net::SocketAddr;
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,9 +18,13 @@ use tracing::{error, info};
 
 use serde::Deserialize;
 
+use crate::rate_limit::{RateLimitDecision, RateLimiter};
 use crate::{derive_forwarding_address, CreateForwardingRequest, ForwardingRequest};
 
 const BACKEND_METRICS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How often idle rate-limit buckets are swept to bound memory.
+const RATE_LIMIT_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Backend configuration
 #[derive(Parser, Debug)]
@@ -34,6 +40,11 @@ pub struct BackendConfig {
     /// Metrics port for Prometheus scraping
     #[arg(long, env = "BACKEND_METRICS_PORT")]
     pub metrics_port: Option<u16>,
+
+    /// Path to the rate-limit config file (JSON). When unset, rate limiting is
+    /// disabled and all requests are accepted.
+    #[arg(long, env = "RATE_LIMIT_CONFIG")]
+    pub rate_limit_config: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -313,13 +324,33 @@ impl BackendState {
 pub struct Backend {
     state: BackendState,
     port: u16,
+    rate_limiter: Option<Arc<RateLimiter>>,
 }
 
 impl Backend {
     pub fn new(port: u16, db_path: PathBuf, metrics_enabled: bool) -> Result<Self> {
+        Self::with_rate_limiter(port, db_path, metrics_enabled, None)
+    }
+
+    /// Construct a backend, optionally loading a rate limiter from a config file.
+    pub fn with_rate_limiter(
+        port: u16,
+        db_path: PathBuf,
+        metrics_enabled: bool,
+        rate_limit_config: Option<PathBuf>,
+    ) -> Result<Self> {
+        let rate_limiter = match rate_limit_config {
+            Some(path) => Some(Arc::new(RateLimiter::load(&path)?)),
+            None => {
+                info!("No rate-limit config provided; rate limiting disabled");
+                None
+            }
+        };
+
         Ok(Self {
             state: BackendState::new(db_path, metrics_enabled)?,
             port,
+            rate_limiter,
         })
     }
 
@@ -344,7 +375,7 @@ impl Backend {
             });
         }
 
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/forwarding-address", get(get_forwarding_address))
             .route(
                 "/forwarding-requests",
@@ -353,14 +384,63 @@ impl Backend {
             .route("/forwarding-requests/:addr", delete(complete_request))
             .with_state(self.state);
 
+        if let Some(limiter) = self.rate_limiter {
+            // Sweep idle buckets periodically so unbounded distinct IPs cannot
+            // grow the bucket map without limit.
+            let cleanup_limiter = limiter.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(RATE_LIMIT_CLEANUP_INTERVAL).await;
+                    cleanup_limiter.cleanup();
+                }
+            });
+
+            app = app.layer(middleware::from_fn_with_state(limiter, rate_limit_middleware));
+        }
+
         let addr = format!("0.0.0.0:{}", self.port);
         info!("Backend listening on {}", addr);
 
         let listener = tokio::net::TcpListener::bind(&addr).await?;
-        axum::serve(listener, app).await?;
+        // `into_make_service_with_connect_info` exposes the peer address to the
+        // rate-limit middleware via `ConnectInfo<SocketAddr>`.
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
 
         Ok(())
     }
+}
+
+/// Rate-limit submissions (`POST /forwarding-requests`) by client IP. Non-POST
+/// requests (the relayer's polling GETs and completion DELETEs) are never limited.
+async fn rate_limit_middleware(
+    State(limiter): State<Arc<RateLimiter>>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    if request.method() == Method::POST {
+        if let RateLimitDecision::Limited { retry_after_secs } = limiter.check(peer.ip()) {
+            if crate::metrics_enabled() {
+                counter!("rate_limited_requests_total").increment(1);
+            }
+            info!(ip = %peer.ip(), retry_after_secs, "Rate limited submission");
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [("Retry-After", retry_after_secs.to_string())],
+                Json(serde_json::json!({
+                    "error": "rate limit exceeded",
+                    "retry_after_secs": retry_after_secs,
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    next.run(request).await
 }
 
 pub fn oldest_pending_request_age_seconds(created_at: Option<&str>) -> Result<f64> {
