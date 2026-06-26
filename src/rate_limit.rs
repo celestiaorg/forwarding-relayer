@@ -116,7 +116,9 @@ impl RateLimiter {
         let mut overrides: HashMap<IpAddr, u32> = HashMap::new();
 
         for app in &config.apps {
-            let budget = app.per_minute.unwrap_or(config.whitelist_default_per_minute);
+            let budget = app
+                .per_minute
+                .unwrap_or(config.whitelist_default_per_minute);
             for host in &app.hosts {
                 match resolve_host(host) {
                     Ok(ips) if ips.is_empty() => {
@@ -183,7 +185,9 @@ impl RateLimiter {
             last_refill: now,
         });
 
-        let elapsed = now.saturating_duration_since(bucket.last_refill).as_secs_f64();
+        let elapsed = now
+            .saturating_duration_since(bucket.last_refill)
+            .as_secs_f64();
         bucket.tokens = (bucket.tokens + elapsed * rate).min(capacity);
         bucket.last_refill = now;
 
@@ -215,7 +219,9 @@ impl RateLimiter {
             }
             let capacity = budget as f64;
             let rate = capacity / WINDOW.as_secs_f64();
-            let elapsed = now.saturating_duration_since(bucket.last_refill).as_secs_f64();
+            let elapsed = now
+                .saturating_duration_since(bucket.last_refill)
+                .as_secs_f64();
             let tokens = (bucket.tokens + elapsed * rate).min(capacity);
             // Keep only buckets that still carry a deficit; full buckets are
             // safe to forget.
@@ -289,7 +295,10 @@ mod tests {
         // Immediately after exhausting, a full window is needed for the next token.
         match rl.check_at(ip(1), t0) {
             RateLimitDecision::Limited { retry_after_secs } => {
-                assert!((1..=60).contains(&retry_after_secs), "got {retry_after_secs}");
+                assert!(
+                    (1..=60).contains(&retry_after_secs),
+                    "got {retry_after_secs}"
+                );
             }
             other => panic!("expected limited, got {other:?}"),
         }

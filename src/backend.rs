@@ -395,7 +395,10 @@ impl Backend {
                 }
             });
 
-            app = app.layer(middleware::from_fn_with_state(limiter, rate_limit_middleware));
+            app = app.layer(middleware::from_fn_with_state(
+                limiter,
+                rate_limit_middleware,
+            ));
         }
 
         let addr = format!("0.0.0.0:{}", self.port);

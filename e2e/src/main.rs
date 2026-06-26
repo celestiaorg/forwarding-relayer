@@ -180,7 +180,10 @@ async fn main() -> Result<()> {
         "E: rapid back-to-back deposits (no lost triggers)",
         scenario_rapid_back_to_back(&ctx)
     );
-    run!("F: rate limiting (default cap + whitelist bypass)", scenario_rate_limit());
+    run!(
+        "F: rate limiting (default cap + whitelist bypass)",
+        scenario_rate_limit()
+    );
 
     info!("\n========== E2E Summary ==========");
     let mut failed = 0;
