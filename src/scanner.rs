@@ -186,7 +186,10 @@ impl RpcPool {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        anyhow::ensure!(!endpoints.is_empty(), "CELESTIA_RPC contained no usable URLs");
+        anyhow::ensure!(
+            !endpoints.is_empty(),
+            "CELESTIA_RPC contained no usable URLs"
+        );
         Ok(Self { endpoints })
     }
 
@@ -306,7 +309,10 @@ pub(crate) async fn run_block_scanner(
                 if pool.len() > 1 {
                     current = (current + 1) % pool.len();
                     counter!("relayer_rpc_failover_total").increment(1);
-                    warn!("Failing over to RPC endpoint {}", pool.endpoints[current].url);
+                    warn!(
+                        "Failing over to RPC endpoint {}",
+                        pool.endpoints[current].url
+                    );
                 }
             }
         }
