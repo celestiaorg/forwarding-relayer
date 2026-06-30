@@ -8,6 +8,15 @@
 //!
 //! CometBFT has instant finality (no reorgs on committed blocks), so scanning the
 //! committed `block_results` for a height is safe and never needs to be undone.
+//!
+//! The one subtlety is *read-after-write*, not finality: a node can deliver the
+//! `NewBlock` notification for height H (from consensus) microseconds before its own
+//! RPC layer has H's `FinalizeBlock` tx-results durably queryable, so
+//! `block_results(H)` can briefly return HTTP 200 with no tx events for the
+//! just-committed tip. To avoid reading into that window the scanner stays a small
+//! `confirmation_depth` of blocks behind the tip (default 2), by which point the node
+//! has long since indexed the block. This is purely an indexing-lag margin, not reorg
+//! protection.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -143,6 +152,75 @@ async fn current_height(http: &HttpClient) -> Result<u64> {
     Ok(status.sync_info.latest_block_height.value())
 }
 
+/// One CometBFT RPC endpoint: an HTTP client for `block_results`/`status` and the
+/// WebSocket URL derived from it for the `NewBlock` trigger.
+struct RpcEndpoint {
+    url: String,
+    http: HttpClient,
+    ws_url: String,
+}
+
+/// An ordered set of interchangeable CometBFT RPC endpoints. The first is the
+/// preferred primary and the rest are fallbacks. The scanner runs one session
+/// against one endpoint at a time and rotates to the next on failure, so a single
+/// unhealthy node degrades to its neighbor instead of stalling deposit detection.
+struct RpcPool {
+    endpoints: Vec<RpcEndpoint>,
+}
+
+impl RpcPool {
+    /// Parse a comma-separated list of RPC URLs (surrounding whitespace trimmed,
+    /// empty entries skipped) into a pool, building one HTTP client per endpoint.
+    /// A single URL yields a one-endpoint pool, i.e. the original no-failover behavior.
+    fn new(spec: &str) -> Result<Self> {
+        let endpoints = spec
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|url| {
+                Ok(RpcEndpoint {
+                    url: url.to_string(),
+                    http: HttpClient::new(url)
+                        .with_context(|| format!("Invalid CometBFT RPC URL: {url}"))?,
+                    ws_url: derive_ws_url(url),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        anyhow::ensure!(!endpoints.is_empty(), "CELESTIA_RPC contained no usable URLs");
+        Ok(Self { endpoints })
+    }
+
+    fn len(&self) -> usize {
+        self.endpoints.len()
+    }
+
+    /// Comma-separated list of endpoint URLs, for logging.
+    fn url_list(&self) -> String {
+        self.endpoints
+            .iter()
+            .map(|e| e.url.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Query the chain tip, trying each endpoint in order until one answers. Used for
+    /// the one-time cursor bootstrap so startup survives the primary being down.
+    async fn current_height(&self) -> Result<u64> {
+        let mut last_err = None;
+        for ep in &self.endpoints {
+            match current_height(&ep.http).await {
+                Ok(height) => return Ok(height),
+                Err(e) => {
+                    warn!("Status query failed on {}: {e:#}", ep.url);
+                    last_err = Some(e);
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no RPC endpoints")))
+            .context("All RPC endpoints failed to return chain status")
+    }
+}
+
 /// Run the event-driven block scanner forever.
 ///
 /// Maintains a strictly-monotonic height cursor (persisted after every block) and
@@ -150,16 +228,26 @@ async fn current_height(http: &HttpClient) -> Result<u64> {
 /// per-height fetch is `block_results` over HTTP, so a dropped/closed subscription
 /// resumes from the persisted cursor with no missed blocks. For every detected
 /// deposit whose recipient is in the live set, the recipient is sent to `deposits_tx`.
+///
+/// `rpc_url` may be a comma-separated list of equivalent CometBFT RPC endpoints; the
+/// first is the primary and the rest are fallbacks. Each scan session runs against a
+/// single endpoint and a session failure rotates to the next, so one unhealthy node
+/// fails over to its neighbor. Because the cursor only advances on success, failing
+/// over mid-stream never skips a block — the next endpoint resumes where this one left off.
 pub(crate) async fn run_block_scanner(
     rpc_url: String,
     start_height: Option<u64>,
+    confirmation_depth: u64,
     live: LiveSet,
     store: Arc<Mutex<RetryStore>>,
     deposits_tx: Sender<String>,
 ) -> Result<()> {
-    let http = HttpClient::new(rpc_url.as_str())
-        .with_context(|| format!("Invalid CometBFT RPC URL: {rpc_url}"))?;
-    let ws_url = derive_ws_url(&rpc_url);
+    let pool = RpcPool::new(&rpc_url)?;
+    info!(
+        "Block scanner using {} RPC endpoint(s): {}",
+        pool.len(),
+        pool.url_list()
+    );
 
     // Establish the starting cursor: persisted height, else configured start
     // (scanned inclusively), else the current chain tip. Bind the load result so
@@ -170,31 +258,57 @@ pub(crate) async fn run_block_scanner(
         Ok(None) => match start_height {
             Some(height) => height.saturating_sub(1),
             None => {
-                let tip = current_height(&http).await?;
+                let tip = pool.current_height().await?;
                 info!("No persisted scan cursor; starting from chain tip {tip}");
                 tip
             }
         },
         Err(e) => {
             warn!("Failed to load scan cursor, starting from chain tip: {e:#}");
-            current_height(&http).await?
+            pool.current_height().await?
         }
     };
     if let Err(e) = store.lock().unwrap().store_height(cursor) {
         warn!("Failed to persist initial scan cursor: {e:#}");
     }
-    info!("Block scanner starting at cursor height {cursor}");
+    info!(
+        "Block scanner starting at cursor height {cursor} (confirmation depth {confirmation_depth})"
+    );
 
+    // Round-robin failover index: each session runs against one endpoint, and a
+    // session failure advances to the next so an unhealthy node is skipped on the
+    // next attempt. A clean subscription end keeps the same (working) endpoint.
+    let mut current = 0;
     loop {
-        match scan_session(&http, &ws_url, &mut cursor, &live, &store, &deposits_tx).await {
+        let endpoint = &pool.endpoints[current];
+        match scan_session(
+            &endpoint.http,
+            &endpoint.ws_url,
+            &mut cursor,
+            confirmation_depth,
+            &live,
+            &store,
+            &deposits_tx,
+        )
+        .await
+        {
             Ok(()) => warn!(
-                "Block subscription ended; reconnecting in {}s",
+                "Block subscription ended on {}; reconnecting in {}s",
+                endpoint.url,
                 RECONNECT_DELAY.as_secs()
             ),
-            Err(e) => error!(
-                "Block scan session failed: {e:#}; reconnecting in {}s",
-                RECONNECT_DELAY.as_secs()
-            ),
+            Err(e) => {
+                error!(
+                    "Block scan session failed on {}: {e:#}; reconnecting in {}s",
+                    endpoint.url,
+                    RECONNECT_DELAY.as_secs()
+                );
+                if pool.len() > 1 {
+                    current = (current + 1) % pool.len();
+                    counter!("relayer_rpc_failover_total").increment(1);
+                    warn!("Failing over to RPC endpoint {}", pool.endpoints[current].url);
+                }
+            }
         }
         tokio::time::sleep(RECONNECT_DELAY).await;
     }
@@ -204,6 +318,7 @@ async fn scan_session(
     http: &HttpClient,
     ws_url: &str,
     cursor: &mut u64,
+    confirmation_depth: u64,
     live: &LiveSet,
     store: &Arc<Mutex<RetryStore>>,
     deposits_tx: &Sender<String>,
@@ -217,10 +332,19 @@ async fn scan_session(
         .await
         .context("Failed to subscribe to NewBlock events")?;
 
-    // Catch up to the current tip before processing live events, so a restart with
-    // an old cursor replays every intervening block.
+    // Catch up to the confirmed tip before processing live events, so a restart with
+    // an old cursor replays every intervening block. Stay `confirmation_depth` blocks
+    // behind so we never read a height whose tx-results the node hasn't indexed yet.
     let tip = current_height(http).await?;
-    scan_to(http, cursor, tip, live, store, deposits_tx).await?;
+    scan_to(
+        http,
+        cursor,
+        tip.saturating_sub(confirmation_depth),
+        live,
+        store,
+        deposits_tx,
+    )
+    .await?;
 
     while let Some(event) = subscription.next().await {
         let event = event.context("WebSocket subscription error")?;
@@ -228,8 +352,18 @@ async fn scan_session(
             block: Some(block), ..
         } = event.data
         {
+            // A NewBlock for height H only authorizes scanning up to H - depth; the
+            // tip itself stays unscanned until depth more blocks confirm it.
             let height = block.header.height.value();
-            scan_to(http, cursor, height, live, store, deposits_tx).await?;
+            scan_to(
+                http,
+                cursor,
+                height.saturating_sub(confirmation_depth),
+                live,
+                store,
+                deposits_tx,
+            )
+            .await?;
         }
     }
 
