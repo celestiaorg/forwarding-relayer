@@ -262,6 +262,11 @@ pub struct RelayerConfig {
     /// Celestia CometBFT RPC URL (port 26657). Used to scan committed blocks for
     /// deposit events and to subscribe to new blocks over WebSocket. The WebSocket
     /// URL is derived from this (http→ws, https→wss, plus `/websocket`).
+    ///
+    /// Accepts a comma-separated list for redundancy, e.g.
+    /// `http://node-a:26657,http://node-b:26657`. The first URL is the primary and
+    /// the rest are fallbacks: the scanner runs against one endpoint at a time and
+    /// rotates to the next whenever a session fails.
     #[arg(long, env = "CELESTIA_RPC", default_value = "http://localhost:26657")]
     pub celestia_rpc: String,
 
@@ -282,6 +287,17 @@ pub struct RelayerConfig {
     #[arg(long, env = "MAINTENANCE_INTERVAL", default_value = "30")]
     pub maintenance_interval: u64,
 
+    /// Interval in seconds between balance-poll backstop sweeps over the live list.
+    /// This is the emergency fallback, not the primary fix: `block_confirmation_depth`
+    /// already keeps the scanner far enough behind the tip that it never reads a
+    /// not-yet-indexed block, so in normal operation this sweep should never be the
+    /// thing that catches a deposit. It exists only as defense-in-depth against an
+    /// unforeseen scanner gap — a periodic re-query of every live address that catches
+    /// any missed deposit on the next sweep, independent of the exact block. Set to 0
+    /// to disable.
+    #[arg(long, env = "BALANCE_POLL_INTERVAL", default_value = "3600")]
+    pub balance_poll_interval: u64,
+
     /// Maximum number of forwarding submissions processed concurrently.
     #[arg(long, env = "FORWARD_CONCURRENCY", default_value = "64")]
     pub forward_concurrency: usize,
@@ -290,6 +306,17 @@ pub struct RelayerConfig {
     /// Defaults to the chain tip at startup when unset.
     #[arg(long, env = "BLOCK_SCAN_START_HEIGHT")]
     pub block_scan_start_height: Option<u64>,
+
+    /// Number of blocks to lag behind the chain tip before scanning a height. This
+    /// is NOT a reorg-safety depth — CometBFT commits are absolutely final. It only
+    /// absorbs the brief read-after-write window where a `NewBlock` notification can
+    /// outrace the same node's RPC tx-result indexing and return an empty
+    /// `block_results` for the just-committed tip. One block of block-time is enough;
+    /// the default of 2 adds margin. With this set, the balance-poll backstop should
+    /// effectively never be the thing that catches a deposit. Set to 0 to scan the
+    /// tip immediately (the old behavior).
+    #[arg(long, env = "BLOCK_CONFIRMATION_DEPTH", default_value = "2")]
+    pub block_confirmation_depth: u64,
 
     /// IGP fee buffer multiplier (e.g., 1.1 for 10% buffer)
     #[arg(long, env = "IGP_FEE_BUFFER", default_value = "1.1")]
@@ -573,6 +600,18 @@ impl Relayer {
             tokio::spawn(run_maintenance(shared, tx));
         }
 
+        // Balance-poll backstop: periodically re-checks every live address so a
+        // deposit missed by the event-driven scanner (e.g. a node tip read-after-
+        // NewBlock race that returns an empty block_results) is still caught on the
+        // next sweep instead of being stranded forever.
+        if shared.config.balance_poll_interval > 0 {
+            let shared = shared.clone();
+            let tx = deposits_tx.clone();
+            tokio::spawn(run_balance_poll(shared, tx));
+        } else {
+            warn!("Balance-poll backstop disabled (BALANCE_POLL_INTERVAL=0)");
+        }
+
         // Block scanner (deposit detection).
         {
             let shared = shared.clone();
@@ -581,6 +620,7 @@ impl Relayer {
                 if let Err(e) = scanner::run_block_scanner(
                     shared.config.celestia_rpc.clone(),
                     shared.config.block_scan_start_height,
+                    shared.config.block_confirmation_depth,
                     shared.live.clone(),
                     shared.store.clone(),
                     tx,
@@ -610,7 +650,8 @@ async fn run_dispatcher(
     // addr -> dirty. Presence means a forward is in flight; `dirty` means another
     // trigger arrived while it was processing, so the address must be re-run once
     // it finishes (a deposit that lands mid-forward must not be lost — the scanner
-    // won't re-emit it and there is no periodic poll).
+    // won't re-emit it; the balance-poll backstop would eventually catch it, but
+    // re-running immediately avoids waiting a whole poll interval).
     let in_flight: Arc<Mutex<HashMap<String, bool>>> = Arc::new(Mutex::new(HashMap::new()));
 
     while let Some(addr) = deposits_rx.recv().await {
@@ -682,8 +723,8 @@ async fn forward_address(shared: &RelayerState, forward_addr: &str) {
         Ok(balances) => balances,
         Err(e) => {
             // A transient query failure must not strand the deposit: schedule a
-            // backoff retry (the scanner won't re-emit this deposit, and there is
-            // no periodic poll to fall back on).
+            // backoff retry (the scanner won't re-emit this deposit; the balance-poll
+            // backstop is the slower fallback, but the explicit retry recovers sooner).
             counter!(
                 "forwarding_requests_processed_total",
                 "status" => "query_failed",
@@ -861,6 +902,41 @@ async fn run_maintenance(shared: RelayerState, deposits_tx: mpsc::Sender<String>
             warn!("Maintenance tick failed: {:#}", e);
         }
         tokio::time::sleep(interval).await;
+    }
+}
+
+/// Periodic balance-poll backstop. Every `balance_poll_interval` seconds it
+/// re-enqueues every address currently on the live list for a forward attempt.
+///
+/// This is deliberately the same path a detected deposit takes, so it inherits all
+/// the existing safety: the dispatcher dedupes addresses already in flight, the
+/// forward path skips addresses still inside their submission-backoff window, and an
+/// address with an empty balance is a cheap no-op that clears stale state. The net
+/// effect is that detection no longer depends on catching the exact block a deposit
+/// landed in — a scanner miss merely delays the forward to the next sweep.
+async fn run_balance_poll(shared: RelayerState, deposits_tx: mpsc::Sender<String>) {
+    let interval = Duration::from_secs(shared.config.balance_poll_interval.max(1));
+    info!(
+        "Balance-poll backstop enabled: re-checking live addresses every {}s",
+        interval.as_secs()
+    );
+    loop {
+        tokio::time::sleep(interval).await;
+
+        // Snapshot the live keys, then release the lock before the (async, bounded)
+        // sends so we never hold the mutex across an `.await`.
+        let addrs: Vec<String> = shared.live.lock().unwrap().keys().cloned().collect();
+        let count = addrs.len();
+        for addr in addrs {
+            // Awaiting applies backpressure if the forward queue is full, matching
+            // the scanner's behavior; a closed receiver only happens on shutdown.
+            if deposits_tx.send(addr).await.is_err() {
+                return;
+            }
+        }
+        counter!("relayer_balance_poll_sweeps_total").increment(1);
+        gauge!("relayer_balance_poll_addresses").set(count as f64);
+        debug!("Balance-poll backstop swept {count} live addresses");
     }
 }
 

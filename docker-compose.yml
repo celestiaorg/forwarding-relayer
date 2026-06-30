@@ -142,6 +142,14 @@ services:
       - MAX_REQUEST_AGE_SECONDS=300
       - MAX_ADDRESS_INACTIVITY_SECONDS=600
       - MAINTENANCE_INTERVAL=15
+      # Stay 2 blocks behind the tip so the scanner never reads a block whose
+      # tx-results the node hasn't indexed yet (NewBlock-vs-RPC read-after-write).
+      - BLOCK_CONFIRMATION_DEPTH=2
+      # Balance-poll backstop sweep (production default 3600): emergency fallback that
+      # re-checks live addresses. Shortened to 60s here only so the e2e exercises the
+      # path; with the confirmation depth above it should never actually be the thing
+      # that catches a deposit.
+      - BALANCE_POLL_INTERVAL=60
       - RELAYER_METRICS_PORT=9092
     volumes:
       - forwarding-relayer-data:/app/storage
