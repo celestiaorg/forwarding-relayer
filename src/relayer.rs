@@ -255,7 +255,14 @@ pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
 /// Relayer configuration
 #[derive(Parser, Debug)]
 pub struct RelayerConfig {
-    /// Celestia gRPC URL (port 9090)
+    /// Celestia gRPC URL (port 9090). Used for balance queries, IGP fee quotes,
+    /// and transaction submission.
+    ///
+    /// Accepts a comma-separated list for redundancy, e.g.
+    /// `http://node-a:9090,http://node-b:9090`. The first URL is the primary and
+    /// the rest are fallbacks: queries fail over to the next endpoint within the
+    /// same call, and a failed transaction submission rotates the preferred
+    /// endpoint so the backoff retry runs against the fallback.
     #[arg(long, env = "CELESTIA_GRPC", default_value = "http://localhost:9090")]
     pub celestia_grpc: String,
 
@@ -568,7 +575,11 @@ impl Relayer {
     pub async fn run(self) -> Result<()> {
         let shared = self.shared;
         info!("Starting forwarding relayer (event-driven)");
-        info!("Celestia gRPC: {}", shared.config.celestia_grpc);
+        info!(
+            "Celestia gRPC: {} endpoint(s): {}",
+            shared.celestia.endpoint_count(),
+            shared.celestia.url_list()
+        );
         info!("Celestia RPC:  {}", shared.config.celestia_rpc);
         info!("Backend URL:   {}", shared.config.backend_url);
 
