@@ -96,6 +96,13 @@ pub struct MsgForward {
     /// Required: relayer must provide sufficient fee for the transfer.
     #[prost(message, optional, tag="6")]
     pub max_igp_fee: ::core::option::Option<super::super::super::cosmos::base::v1beta1::Coin>,
+    /// custom_hook_id optionally selects the post-dispatch hook (e.g. an alternative
+    /// IGP) that handles the interchain gas payment. Empty => mailbox default hook.
+    #[prost(string, tag="7")]
+    pub custom_hook_id: ::prost::alloc::string::String,
+    /// custom_hook_metadata is optional hex-encoded metadata passed to the custom hook.
+    #[prost(string, tag="8")]
+    pub custom_hook_metadata: ::prost::alloc::string::String,
 }
 /// MsgForwardResponse is the response for MsgForward.
 #[allow(clippy::derive_partial_eq_without_eq)]

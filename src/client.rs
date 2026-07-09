@@ -250,6 +250,7 @@ impl CelestiaClient {
         dest_recipient: &str,
         token_id: &str,
         max_igp_fee: &str,
+        custom_hook_id: Option<&str>,
     ) -> Result<String> {
         info!(
             "Submitting forward: addr={}, domain={}, recipient={}, token_id={}, max_fee={}",
@@ -276,6 +277,8 @@ impl CelestiaClient {
                 denom: fee_denom.to_string(),
                 amount: fee_amount.to_string(),
             }),
+            custom_hook_id: custom_hook_id.unwrap_or_default().to_string(),
+            custom_hook_metadata: String::new(),
         };
 
         // Submissions deliberately do NOT fail over within the call: a timed-out

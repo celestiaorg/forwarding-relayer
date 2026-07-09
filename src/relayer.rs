@@ -285,6 +285,14 @@ pub struct RelayerConfig {
     #[arg(long, env = "PRIVATE_KEY_HEX")]
     pub private_key_hex: String,
 
+    /// Optional custom IGP hook id (hex) to route each forward's interchain gas
+    /// payment through, e.g. an alternative IGP this relayer watches. When set, it
+    /// is passed as MsgForward.custom_hook_id so the fee is paid to that IGP (and
+    /// this relayer, rather than the mailbox default hook / default relayer).
+    /// Empty/unset => mailbox default hook (unchanged behavior).
+    #[arg(long, env = "CUSTOM_IGP_HOOK")]
+    pub custom_igp_hook: Option<String>,
+
     /// Signer-balance metrics refresh interval in seconds.
     #[arg(long, env = "POLL_INTERVAL", default_value = "6")]
     pub poll_interval: u64,
@@ -802,6 +810,7 @@ async fn forward_address(shared: &RelayerState, forward_addr: &str) {
             &request.dest_recipient,
             &request.token_id,
             &max_igp_fee,
+            shared.config.custom_igp_hook.as_deref(),
         )
         .await
     {
