@@ -880,7 +880,11 @@ async fn resolve_max_igp_fee(
         None => {
             let quoted_fee = match shared
                 .celestia
-                .query_igp_fee(request.dest_domain, &request.token_id)
+                .query_igp_fee(
+                    request.dest_domain,
+                    &request.token_id,
+                    shared.config.custom_igp_hook.as_deref(),
+                )
                 .await
             {
                 Ok(fee) => fee,

@@ -60,6 +60,11 @@ pub struct QueryQuoteForwardingFeeRequest {
     /// token_id is the hex-encoded token identifier.
     #[prost(string, tag="2")]
     pub token_id: ::prost::alloc::string::String,
+    /// custom_hook_id optionally selects the post-dispatch hook (e.g. an alternative
+    /// IGP) the forward will be routed through, so the quote reflects that hook's
+    /// price. Hex-encoded (0x prefix optional). Empty => mailbox default hook.
+    #[prost(string, tag="3")]
+    pub custom_hook_id: ::prost::alloc::string::String,
 }
 /// QueryQuoteForwardingFeeResponse is the response for QuoteForwardingFee.
 #[allow(clippy::derive_partial_eq_without_eq)]
