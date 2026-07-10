@@ -5,7 +5,7 @@ use ethers::types::transaction::eip2718::TypedTransaction;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
-use forwarding_relayer::{CreateForwardingRequest, ForwardingRequest};
+use forwarding_relayer::{Backend, CreateForwardingRequest, ForwardingRequest};
 
 const WARP_ROUTE_CONFIG_PATH: &str =
     "testnet/hyperlane/registry/deployments/warp_routes/TIA/celestiadev-rethlocal-config.yaml";
@@ -179,6 +179,10 @@ async fn main() -> Result<()> {
     run!(
         "E: rapid back-to-back deposits (no lost triggers)",
         scenario_rapid_back_to_back(&ctx)
+    );
+    run!(
+        "F: rate limiting (default cap + whitelist bypass)",
+        scenario_rate_limit()
     );
 
     info!("\n========== E2E Summary ==========");
@@ -369,6 +373,121 @@ async fn scenario_rapid_back_to_back(ctx: &Ctx) -> Result<()> {
     .await
     .context("not all rapid back-to-back deposits were relayed")?;
     Ok(())
+}
+
+/// Scenario F: verify the backend's per-IP rate limiting. This is self-contained:
+/// it starts two throwaway in-process backends (each with its own tiny rate-limit
+/// config) so it does not interfere with the shared dockerized backend used by the
+/// other scenarios.
+///
+/// - A non-whitelisted client gets the default budget (1/min): the first POST is
+///   accepted, the second is rejected with `429` + a `Retry-After` header.
+/// - A whitelisted client (here, loopback) bypasses the low default and can burst
+///   well past it without being limited.
+async fn scenario_rate_limit() -> Result<()> {
+    // A request body whose forward_addr will not match derivation. The handler
+    // rejects it with 400 — but only *after* the rate-limit middleware runs, so a
+    // non-429 status proves the request was admitted by the limiter.
+    let body = CreateForwardingRequest {
+        forward_addr: "celestia1ratelimittest".to_string(),
+        dest_domain: 1,
+        dest_recipient: "0x00".to_string(),
+        token_id: "0x00".to_string(),
+    };
+    let client = reqwest::Client::new();
+
+    // --- Part 1: default cap of 1/min, no whitelist -> second POST is limited. ---
+    let capped_port = 18080;
+    start_rate_limited_backend(capped_port, 1, None).await?;
+    let url = format!("http://127.0.0.1:{capped_port}/forwarding-requests");
+
+    let first = client.post(&url).json(&body).send().await?;
+    anyhow::ensure!(
+        first.status() != reqwest::StatusCode::TOO_MANY_REQUESTS,
+        "first request should be admitted, got {}",
+        first.status()
+    );
+
+    let second = client.post(&url).json(&body).send().await?;
+    anyhow::ensure!(
+        second.status() == reqwest::StatusCode::TOO_MANY_REQUESTS,
+        "second request within the minute should be rate limited, got {}",
+        second.status()
+    );
+    anyhow::ensure!(
+        second.headers().contains_key(reqwest::header::RETRY_AFTER),
+        "429 response must carry a Retry-After header"
+    );
+    info!("Default cap honored: 2nd request returned 429 with Retry-After");
+
+    // --- Part 2: loopback whitelisted at a high budget -> bursts are admitted. ---
+    let wl_port = 18081;
+    start_rate_limited_backend(wl_port, 1, Some(6000)).await?;
+    let wl_url = format!("http://127.0.0.1:{wl_port}/forwarding-requests");
+
+    const BURST: usize = 50;
+    for i in 0..BURST {
+        let resp = client.post(&wl_url).json(&body).send().await?;
+        anyhow::ensure!(
+            resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS,
+            "whitelisted client should not be limited, but request {i} got 429"
+        );
+    }
+    info!("Whitelist bypass honored: {BURST} rapid requests all admitted");
+
+    Ok(())
+}
+
+/// Start a throwaway in-process backend with rate limiting enabled, listening on
+/// `port`, and wait until it is reachable.
+///
+/// `default_per_minute` is the budget for non-whitelisted IPs. When
+/// `whitelist_loopback` is `Some(n)`, `127.0.0.1`/`::1` are whitelisted at budget `n`.
+async fn start_rate_limited_backend(
+    port: u16,
+    default_per_minute: u32,
+    whitelist_loopback: Option<u32>,
+) -> Result<()> {
+    let apps = match whitelist_loopback {
+        Some(per_minute) => serde_json::json!([{
+            "name": "loopback",
+            "hosts": ["127.0.0.1", "::1"],
+            "per_minute": per_minute,
+        }]),
+        None => serde_json::json!([]),
+    };
+    let config = serde_json::json!({
+        "default_per_minute": default_per_minute,
+        "whitelist_default_per_minute": 6000,
+        "apps": apps,
+    });
+
+    let config_path = std::env::temp_dir().join(format!("e2e_rate_limit_{port}.json"));
+    std::fs::write(&config_path, serde_json::to_vec_pretty(&config)?)
+        .context("failed to write rate-limit config")?;
+    let db_path = std::env::temp_dir().join(format!("e2e_rate_limit_{port}.db"));
+
+    let backend = Backend::with_rate_limiter(port, db_path, false, Some(config_path))
+        .context("failed to construct rate-limited backend")?;
+    tokio::spawn(async move {
+        if let Err(e) = backend.serve().await {
+            error!("rate-limit test backend on port {port} exited: {e:#}");
+        }
+    });
+
+    // Wait for the listener to accept connections.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?;
+    let health_url = format!("http://127.0.0.1:{port}/forwarding-requests");
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(10) {
+        if client.get(&health_url).send().await.is_ok() {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    anyhow::bail!("rate-limit test backend on port {port} did not become ready");
 }
 
 impl Ctx {

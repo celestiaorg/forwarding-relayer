@@ -148,7 +148,10 @@ Status codes:
 
 - `201 Created`: request inserted.
 - `200 OK`: request already existed for the same `forward_addr`; existing row returned.
+- `429 Too Many Requests`: the client IP exceeded its rate-limit budget (see [Rate Limiting](#rate-limiting)). The response includes a `Retry-After` header (seconds) and a JSON body `{ "error": "rate limit exceeded", "retry_after_secs": <n> }`.
 - `500 Internal Server Error`: backend storage failure.
+
+Rate limiting applies only to this submission endpoint. The list (`GET`) and completion (`DELETE`) endpoints are never limited.
 
 ### `DELETE /forwarding-requests/:addr`
 
@@ -192,6 +195,45 @@ Current backend metrics include:
 - `oldest_pending_request_age_seconds`
 - `requests_created_total{result="created|existing|error"}`
 - `requests_completed_total{result="removed|not_found|error"}`
+- `rate_limited_requests_total` — submissions rejected with `429`.
+
+## Rate Limiting
+
+Submissions (`POST /forwarding-requests`) are rate limited per client IP using a
+token bucket. Rate limiting is **disabled** unless a config file is supplied via
+`--rate-limit-config` (or the `RATE_LIMIT_CONFIG` env var):
+
+```bash
+./target/release/forwarding-relayer backend --port 8080 \
+  --rate-limit-config /etc/forwarding-relayer/rate-limit.json
+```
+
+The client IP is taken from the TCP peer address, so the backend must be reached
+directly (not via a reverse proxy that would mask the source IP).
+
+Config file format (see `deploy/rate-limit.example.json`):
+
+```json
+{
+  "default_per_minute": 1,
+  "whitelist_default_per_minute": 6000,
+  "apps": [
+    { "name": "my-app", "hosts": ["203.0.113.10", "api.example.com"], "per_minute": 6000 }
+  ]
+}
+```
+
+- `default_per_minute` (default `1`): budget for any IP not on the whitelist.
+- `whitelist_default_per_minute` (default `6000`, i.e. 100/s): budget for whitelisted
+  Apps that omit their own `per_minute`.
+- `apps[].hosts`: IP literals or hostnames. **Hostnames are resolved to IPs once at
+  startup**; DNS changes require a restart. An unresolvable host falls back to the
+  default budget.
+- `apps[].per_minute`: optional per-App override of the whitelist budget.
+- A budget of `0` means unlimited.
+
+The budget is also the burst capacity; tokens refill continuously at `budget / 60`
+per second.
 
 ## Notes
 
