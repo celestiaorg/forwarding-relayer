@@ -255,25 +255,27 @@ pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
 /// Relayer configuration
 #[derive(Parser, Debug)]
 pub struct RelayerConfig {
-    /// Celestia gRPC URL (port 9090). Used for balance queries, IGP fee quotes,
-    /// and transaction submission.
+    /// Celestia gRPC endpoints (port 9090). Used for balance queries, IGP fee
+    /// quotes, and transaction submission.
     ///
-    /// Accepts a comma-separated list for redundancy, e.g.
-    /// `http://node-a:9090,http://node-b:9090`. The first URL is the primary and
-    /// the rest are fallbacks: queries fail over to the next endpoint within the
-    /// same call, and a failed transaction submission rotates the preferred
-    /// endpoint so the backoff retry runs against the fallback.
+    /// Comma-separated list of `url|token` (or bare `url`) entries for redundancy,
+    /// e.g. `http://node-a:9090|tokA,http://node-b:9090`. The first is the primary
+    /// and the rest are fallbacks. Each endpoint's optional token is sent as
+    /// `x-token` gRPC metadata to *that* endpoint — for a token-gated gateway. An
+    /// endpoint with no `|token` stays unauthenticated.
     #[arg(long, env = "CELESTIA_GRPC", default_value = "http://localhost:9090")]
     pub celestia_grpc: String,
 
-    /// Celestia CometBFT RPC URL (port 26657). Used to scan committed blocks for
-    /// deposit events and to subscribe to new blocks over WebSocket. The WebSocket
-    /// URL is derived from this (http→ws, https→wss, plus `/websocket`).
+    /// Celestia CometBFT RPC endpoints (port 26657). Used to scan committed blocks
+    /// for deposit events and to subscribe to new blocks over WebSocket. The
+    /// WebSocket URL is derived from each (http→ws, https→wss, plus `/websocket`).
     ///
-    /// Accepts a comma-separated list for redundancy, e.g.
-    /// `http://node-a:26657,http://node-b:26657`. The first URL is the primary and
-    /// the rest are fallbacks: the scanner runs against one endpoint at a time and
-    /// rotates to the next whenever a session fails.
+    /// Comma-separated list of `url|token` (or bare `url`) entries for redundancy,
+    /// e.g. `http://node-a:26657|tokA,http://node-b:26657`. The first is the
+    /// primary and the rest are fallbacks. Each endpoint's optional token is sent
+    /// as `Authorization: Basic base64(":token")` (token as the Basic password) on
+    /// that endpoint's HTTP calls and WS subscription. The token lives in the
+    /// `|token` part, so it never appears in the URL or its logging.
     #[arg(long, env = "CELESTIA_RPC", default_value = "http://localhost:26657")]
     pub celestia_rpc: String,
 
@@ -580,7 +582,10 @@ impl Relayer {
             shared.celestia.endpoint_count(),
             shared.celestia.url_list()
         );
-        info!("Celestia RPC:  {}", shared.config.celestia_rpc);
+        info!(
+            "Celestia RPC:  {}",
+            crate::redact_endpoint_specs(&shared.config.celestia_rpc)
+        );
         info!("Backend URL:   {}", shared.config.backend_url);
 
         // Channel of addresses to (re)attempt a forward for: fed by the scanner
