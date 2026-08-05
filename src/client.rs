@@ -69,6 +69,44 @@ struct GrpcEndpoint {
     tx_client: GrpcClient,
 }
 
+impl GrpcEndpoint {
+    /// Build one lazily-connected endpoint from its spec: a query channel with the
+    /// `x-token` interceptor baked in, plus a lumina tx client carrying the same
+    /// token. Both stay unauthenticated when the spec has no token.
+    fn build(spec: EndpointSpec, private_key_hex: &str) -> Result<Self> {
+        let EndpointSpec { url, token } = spec;
+
+        let channel = Endpoint::new(url.clone())
+            .with_context(|| format!("Invalid CELESTIA_GRPC URL (expected http/https): {url}"))?
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(GRPC_QUERY_TIMEOUT)
+            .connect_lazy();
+        let channel = InterceptedService::new(
+            channel,
+            AuthInterceptor {
+                token: token.as_ref().map(AuthToken::metadata_value),
+            },
+        );
+
+        // lumina tx endpoint: this endpoint's own `x-token` metadata.
+        let mut tx_endpoint = celestia_grpc::Endpoint::new(url.clone());
+        if let Some(token) = &token {
+            tx_endpoint = tx_endpoint.metadata(AUTH_METADATA_KEY, token.as_str());
+        }
+        let tx_client = GrpcClient::builder()
+            .url(tx_endpoint)
+            .private_key_hex(private_key_hex)
+            .build()
+            .with_context(|| format!("Failed to initialize Celestia gRPC tx client for {url}"))?;
+
+        Ok(GrpcEndpoint {
+            url,
+            channel,
+            tx_client,
+        })
+    }
+}
+
 /// Celestia client for balance queries and transaction submission.
 ///
 /// Holds an ordered set of interchangeable gRPC endpoints: the first is the
@@ -96,42 +134,7 @@ impl CelestiaClient {
         let (private_key_hex, signer_address) = Self::prepare_private_key(&private_key_hex)?;
         let endpoints = parse_endpoint_specs(&grpc_urls)?
             .into_iter()
-            .map(|EndpointSpec { url, token }| {
-                let endpoint = Endpoint::new(url.clone())
-                    .with_context(|| {
-                        format!("Invalid CELESTIA_GRPC URL (expected http/https): {url}")
-                    })?
-                    .connect_timeout(Duration::from_secs(10))
-                    .timeout(GRPC_QUERY_TIMEOUT);
-
-                // lumina tx endpoint: this endpoint's own `x-token` metadata.
-                let mut tx_endpoint = celestia_grpc::Endpoint::new(url.clone());
-                if let Some(token) = &token {
-                    tx_endpoint = tx_endpoint.metadata(AUTH_METADATA_KEY, token.as_str());
-                }
-                let tx_client = GrpcClient::builder()
-                    .url(tx_endpoint)
-                    .private_key_hex(private_key_hex.as_str())
-                    .build()
-                    .with_context(|| {
-                        format!("Failed to initialize Celestia gRPC tx client for {url}")
-                    })?;
-
-                // Bake this endpoint's interceptor into the channel so query clients
-                // built from it always carry the right token.
-                let channel = InterceptedService::new(
-                    endpoint.connect_lazy(),
-                    AuthInterceptor {
-                        token: token.as_ref().map(AuthToken::metadata_value),
-                    },
-                );
-
-                Ok(GrpcEndpoint {
-                    channel,
-                    url,
-                    tx_client,
-                })
-            })
+            .map(|spec| GrpcEndpoint::build(spec, private_key_hex.as_str()))
             .collect::<Result<Vec<_>>>()?;
         anyhow::ensure!(
             !endpoints.is_empty(),

@@ -10,26 +10,35 @@ pub struct EndpointSpec {
     pub token: Option<AuthToken>,
 }
 
+/// Iterate the non-empty, whitespace-trimmed entries of a comma-separated spec.
+fn entries(spec: &str) -> impl Iterator<Item = &str> {
+    spec.split(',').map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Split one trimmed `url|token` entry into its trimmed URL and token parts. A bare
+/// `url` (no `|`, or an empty token after `|`) yields an empty token.
+fn split_entry(entry: &str) -> (&str, &str) {
+    entry
+        .split_once('|')
+        .map(|(u, t)| (u.trim(), t.trim()))
+        .unwrap_or((entry, ""))
+}
+
 /// Parse a comma-separated list of `url|token` (or bare `url`) endpoint specs, e.g.
 /// `http://a:9090|tokA,http://b:9090`. Each entry's token is optional (no `|`, or an
 /// empty `url|` → no token) and is validated with [`AuthToken`]. Whitespace around
 /// entries, URLs, and tokens is trimmed; empty entries are skipped.
 pub fn parse_endpoint_specs(spec: &str) -> Result<Vec<EndpointSpec>> {
-    spec.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+    entries(spec)
         .map(|entry| {
-            let (url, token) = entry
-                .split_once('|')
-                .map(|(u, t)| (u.trim(), t.trim()))
-                .unwrap_or((entry, ""));
+            let (url, token) = split_entry(entry);
             let token = if token.is_empty() {
                 None
             } else {
                 Some(
                     token
                         .parse::<AuthToken>()
-                        .map_err(|e| anyhow::anyhow!(e))
+                        .map_err(anyhow::Error::msg)
                         .with_context(|| format!("invalid auth token for endpoint {url}"))?,
                 )
             };
@@ -44,15 +53,8 @@ pub fn parse_endpoint_specs(spec: &str) -> Result<Vec<EndpointSpec>> {
 /// Render an endpoint-spec list for logging with the `|token` parts stripped, so a
 /// raw `CELESTIA_GRPC`/`CELESTIA_RPC` value never leaks its tokens.
 pub fn redact_endpoint_specs(spec: &str) -> String {
-    spec.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|entry| {
-            entry
-                .split_once('|')
-                .map(|(u, _)| u.trim())
-                .unwrap_or(entry)
-        })
+    entries(spec)
+        .map(|entry| split_entry(entry).0)
         .collect::<Vec<_>>()
         .join(", ")
 }
