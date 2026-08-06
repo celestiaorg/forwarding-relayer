@@ -85,7 +85,7 @@ fn test_derive_forwarding_address_default() {
     let dest_recipient = "0x000000000000000000000000aF9053bB6c4346381C77C2FeD279B17ABAfCDf4d";
     let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
 
-    let result = derive_forwarding_address(dest_domain, dest_recipient, token_id);
+    let result = derive_forwarding_address(dest_domain, dest_recipient, token_id, None, None);
     assert!(result.is_ok());
 
     let address = result.unwrap();
@@ -101,8 +101,10 @@ fn test_derive_forwarding_address_different_token_ids() {
     let token_id_a = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
     let token_id_b = "0x0000000000000000000000001234567890abcdef1234567890abcdef12345678";
 
-    let address_a = derive_forwarding_address(dest_domain, dest_recipient, token_id_a).unwrap();
-    let address_b = derive_forwarding_address(dest_domain, dest_recipient, token_id_b).unwrap();
+    let address_a =
+        derive_forwarding_address(dest_domain, dest_recipient, token_id_a, None, None).unwrap();
+    let address_b =
+        derive_forwarding_address(dest_domain, dest_recipient, token_id_b, None, None).unwrap();
 
     assert_ne!(
         address_a, address_b,
@@ -143,6 +145,8 @@ fn test_derive_forwarding_address_test_vectors() {
             dest_domain,
             &format!("0x{}", dest_recipient),
             &format!("0x{}", token_id),
+            None,
+            None,
         )
         .unwrap_or_else(|e| panic!("{}: derivation failed: {}", name, e));
         assert_eq!(address, expected_bech32, "test vector {} failed", name);
@@ -183,10 +187,9 @@ fn test_balances_equal() {
     assert!(!balances_equal(&balances1, &balances3));
 }
 
-/// Cross-implementation vectors: the expected byte strings were produced by the Go
-/// implementation in celestia-app (x/forwarding/types.DeriveForwardingAddressWithHook and
-/// DeriveForwardingAddress). If the two derivations ever diverge, deposits are sent to an
-/// address the chain will not accept a forward for, so these must stay exact.
+/// Cross-implementation vectors produced by celestia-app's
+/// x/forwarding/types.DeriveForwardingAddress. If the two derivations diverge, deposits go to
+/// an address the chain will not forward, so these must stay exact.
 #[test]
 fn test_derive_forwarding_address_hook_matches_go() {
     use bech32::{Bech32, Hrp};
@@ -222,7 +225,7 @@ fn test_derive_forwarding_address_hook_matches_go() {
     ];
 
     for (hook, metadata, expected_hex) in cases {
-        let got = forwarding_relayer::derive_forwarding_address_for_hook(
+        let got = forwarding_relayer::derive_forwarding_address(
             DEST_DOMAIN,
             DEST_RECIPIENT,
             TOKEN_ID,
@@ -239,7 +242,7 @@ fn test_derive_forwarding_address_hook_matches_go() {
 
     // The no-binding case must also equal the plain v1 helper.
     assert_eq!(
-        derive_forwarding_address(DEST_DOMAIN, DEST_RECIPIENT, TOKEN_ID).unwrap(),
+        derive_forwarding_address(DEST_DOMAIN, DEST_RECIPIENT, TOKEN_ID, None, None).unwrap(),
         bech("27e0c578f2c44de8ddd0bb58782069b65054b987")
     );
 }
@@ -254,10 +257,11 @@ fn test_derive_forwarding_address_zero_hook_is_default() {
     const TOKEN_ID: &str = "0x726f757465725f61707000000000000000000000000000010000000000000000";
     const ZERO: &str = "0x0000000000000000000000000000000000000000000000000000000000000000";
 
-    let base = derive_forwarding_address(DEST_DOMAIN, DEST_RECIPIENT, TOKEN_ID).unwrap();
+    let base =
+        derive_forwarding_address(DEST_DOMAIN, DEST_RECIPIENT, TOKEN_ID, None, None).unwrap();
 
     for hook in [None, Some(""), Some(ZERO)] {
-        let got = forwarding_relayer::derive_forwarding_address_for_hook(
+        let got = forwarding_relayer::derive_forwarding_address(
             DEST_DOMAIN,
             DEST_RECIPIENT,
             TOKEN_ID,
@@ -271,7 +275,7 @@ fn test_derive_forwarding_address_zero_hook_is_default() {
         );
 
         // ...but the same hook paired with metadata is a binding, not the default.
-        let bound = forwarding_relayer::derive_forwarding_address_for_hook(
+        let bound = forwarding_relayer::derive_forwarding_address(
             DEST_DOMAIN,
             DEST_RECIPIENT,
             TOKEN_ID,
@@ -288,7 +292,7 @@ fn test_derive_forwarding_address_zero_hook_is_default() {
 
 #[test]
 fn test_derive_forwarding_address_rejects_bad_hook_length() {
-    let err = forwarding_relayer::derive_forwarding_address_for_hook(
+    let err = forwarding_relayer::derive_forwarding_address(
         1,
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "0x0000000000000000000000000000000000000000000000000000000000000002",

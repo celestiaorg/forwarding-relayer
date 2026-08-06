@@ -16,7 +16,7 @@ use tracing::{error, info};
 
 use serde::Deserialize;
 
-use crate::{derive_forwarding_address_for_hook, CreateForwardingRequest, ForwardingRequest};
+use crate::{derive_forwarding_address, CreateForwardingRequest, ForwardingRequest};
 
 const BACKEND_METRICS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -421,7 +421,7 @@ struct ForwardingAddressQuery {
 /// GET /forwarding-address?dest_domain=<u32>&dest_recipient=<hex>&token_id=<hex>[&custom_hook_id=<hex>]
 /// - Derive forwarding address
 async fn get_forwarding_address(Query(params): Query<ForwardingAddressQuery>) -> impl IntoResponse {
-    match derive_forwarding_address_for_hook(
+    match derive_forwarding_address(
         params.dest_domain,
         &params.dest_recipient,
         &params.token_id,
@@ -464,7 +464,7 @@ async fn create_request(
     Json(create_req): Json<CreateForwardingRequest>,
 ) -> impl IntoResponse {
     // The hook and metadata are part of the derivation, so validate the address against them.
-    match derive_forwarding_address_for_hook(
+    match derive_forwarding_address(
         create_req.dest_domain,
         &create_req.dest_recipient,
         &create_req.token_id,

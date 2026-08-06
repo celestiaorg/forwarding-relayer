@@ -49,6 +49,12 @@ pub enum Command {
         /// Token ID (hex-encoded, e.g., 0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131)
         #[arg(long)]
         token_id: String,
+        /// Optional post-dispatch hook to bind the address to (hex-encoded)
+        #[arg(long)]
+        custom_hook_id: Option<String>,
+        /// Optional hook metadata to bind the address to (hex-encoded)
+        #[arg(long)]
+        custom_hook_metadata: Option<String>,
     },
     /// Derive a private key from a mnemonic
     DerivePrivateKey {
@@ -135,34 +141,25 @@ pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
     Ok(hex::encode(private_key_bytes))
 }
 
-/// Derive a forwarding address from dest_domain, dest_recipient, and token_id
+/// Derive a forwarding address, optionally binding it to a post-dispatch hook and metadata.
 ///
 /// Algorithm from celestia-app/x/forwarding/types/address.go:
-/// 1. callDigest = sha256(destDomain_32bytes || destRecipient || tokenID)
-/// 2. salt = sha256(ForwardVersion || callDigest)
+/// 1. callDigest = sha256(destDomain_32bytes || destRecipient || tokenID [|| hookID || metadata])
+/// 2. salt = sha256(version || callDigest)
 /// 3. address = address.Module("forwarding", salt)[:20]
 /// 4. Encode as bech32 with "celestia" prefix
 ///
 /// Where address.Module(name, key) is:
 ///   th = sha256(typ)
 ///   sha256(th || name || 0x00 || key)
+///
+/// x/forwarding commits the hook and metadata to the address, so an address can only be
+/// forwarded with exactly the pair it was derived with; a mismatch is rejected on chain with
+/// ErrAddressMismatch. `custom_hook_id` of `None`, empty, or the zero address all mean
+/// "mailbox default hook", matching the chain's normalisation, and with no metadata either the
+/// address commits to nothing. `custom_hook_metadata` is hex (0x prefix optional), committed as
+/// decoded bytes so equivalent encodings agree.
 pub fn derive_forwarding_address(
-    dest_domain: u32,
-    dest_recipient: &str,
-    token_id: &str,
-) -> Result<String> {
-    derive_forwarding_address_for_hook(dest_domain, dest_recipient, token_id, None, None)
-}
-
-/// Derive a forwarding address, optionally binding it to a post-dispatch hook and metadata.
-///
-/// x/forwarding commits both to the address, so an address can only be forwarded with exactly
-/// the pair it was derived with; a mismatch is rejected on chain with ErrAddressMismatch.
-///
-/// `custom_hook_id` of `None`, empty, or the zero address all mean "mailbox default hook",
-/// matching the chain's normalisation. `custom_hook_metadata` is hex (0x prefix optional),
-/// committed as decoded bytes so equivalent encodings agree.
-pub fn derive_forwarding_address_for_hook(
     dest_domain: u32,
     dest_recipient: &str,
     token_id: &str,
