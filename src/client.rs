@@ -11,6 +11,15 @@ use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{info, warn};
 
+/// A post-dispatch hook binding. The hook and its metadata always travel together because
+/// the forwarding address commits to them as a pair: quoting or dispatching with only one of
+/// them is rejected on chain with ErrAddressMismatch.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct HookBinding<'a> {
+    pub hook_id: Option<&'a str>,
+    pub metadata: Option<&'a str>,
+}
+
 use crate::proto::celestia::forwarding::v1::{
     query_client::QueryClient as ForwardingQueryClient, MsgForward, QueryQuoteForwardingFeeRequest,
 };
@@ -203,16 +212,19 @@ impl CelestiaClient {
     /// Query IGP fee quote for a destination domain and token via forwarding module gRPC query.
     /// When `custom_hook_id` is set, the quote is against that post-dispatch hook (e.g. an
     /// alternative IGP) so it matches what MsgForward will charge when routed through it.
+    /// `custom_hook_metadata` must match too, since hooks may price off it.
     pub(crate) async fn query_igp_fee(
         &self,
         dest_domain: u32,
         token_id: &str,
-        custom_hook_id: Option<&str>,
+        hook: HookBinding<'_>,
     ) -> Result<String> {
-        let custom_hook_id = custom_hook_id.unwrap_or_default().to_string();
+        let custom_hook_id = hook.hook_id.unwrap_or_default().to_string();
+        let custom_hook_metadata = hook.metadata.unwrap_or_default().to_string();
         let result = self
             .with_failover("IGP fee query", |endpoint| {
                 let custom_hook_id = custom_hook_id.clone();
+                let custom_hook_metadata = custom_hook_metadata.clone();
                 Box::pin(async move {
                     let mut client = ForwardingQueryClient::new(endpoint.channel.clone());
                     let response = tokio::time::timeout(
@@ -221,6 +233,7 @@ impl CelestiaClient {
                             dest_domain,
                             token_id: token_id.to_string(),
                             custom_hook_id,
+                            custom_hook_metadata,
                         }),
                     )
                     .await
@@ -260,7 +273,7 @@ impl CelestiaClient {
         dest_recipient: &str,
         token_id: &str,
         max_igp_fee: &str,
-        custom_hook_id: Option<&str>,
+        hook: HookBinding<'_>,
     ) -> Result<String> {
         info!(
             "Submitting forward: addr={}, domain={}, recipient={}, token_id={}, max_fee={}",
@@ -287,8 +300,8 @@ impl CelestiaClient {
                 denom: fee_denom.to_string(),
                 amount: fee_amount.to_string(),
             }),
-            custom_hook_id: custom_hook_id.unwrap_or_default().to_string(),
-            custom_hook_metadata: String::new(),
+            custom_hook_id: hook.hook_id.unwrap_or_default().to_string(),
+            custom_hook_metadata: hook.metadata.unwrap_or_default().to_string(),
         };
 
         // Submissions deliberately do NOT fail over within the call: a timed-out

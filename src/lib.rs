@@ -69,6 +69,9 @@ pub struct ForwardingRequest {
     /// forward must be submitted with the same hook or the chain rejects it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_hook_id: Option<String>,
+    /// Hook metadata this address is bound to, if any. Committed alongside custom_hook_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_hook_metadata: Option<String>,
     pub created_at: String,
 }
 
@@ -82,6 +85,9 @@ pub struct CreateForwardingRequest {
     /// Optional post-dispatch hook the address was derived with. Omit for the mailbox default.
     #[serde(default)]
     pub custom_hook_id: Option<String>,
+    /// Optional hook metadata the address was derived with. Committed alongside the hook.
+    #[serde(default)]
+    pub custom_hook_metadata: Option<String>,
 }
 
 /// Token balance
@@ -146,23 +152,28 @@ pub fn derive_forwarding_address(
     dest_recipient: &str,
     token_id: &str,
 ) -> Result<String> {
-    derive_forwarding_address_for_hook(dest_domain, dest_recipient, token_id, None)
+    derive_forwarding_address_for_hook(dest_domain, dest_recipient, token_id, None, None)
 }
 
-/// Derive a forwarding address, optionally binding it to a post-dispatch hook.
+/// Derive a forwarding address, optionally binding it to a post-dispatch hook and metadata.
 ///
-/// x/forwarding commits the hook to the address, so an address derived without a hook can
-/// only be forwarded through the mailbox default hook, and an address derived with one can
-/// only be forwarded through that exact hook. A mismatch is rejected on chain with
+/// x/forwarding commits both to the address. An address that commits to neither can only be
+/// forwarded through the mailbox default hook with no metadata; an address that commits to
+/// either can only be forwarded with exactly that pair. A mismatch is rejected on chain with
 /// ErrAddressMismatch.
 ///
-/// `custom_hook_id` of `None`, empty, or the zero address all mean "mailbox default hook"
-/// and produce the version-1 address, matching the chain's normalisation.
+/// `custom_hook_id` of `None`, empty, or the zero address all mean "mailbox default hook",
+/// matching the chain's normalisation. With no metadata either, that yields the version-1
+/// address; with metadata it yields a metadata-only binding under version 2.
+///
+/// `custom_hook_metadata` is hex (0x prefix optional) and is committed as its decoded bytes,
+/// so equivalent encodings derive the same address.
 pub fn derive_forwarding_address_for_hook(
     dest_domain: u32,
     dest_recipient: &str,
     token_id: &str,
     custom_hook_id: Option<&str>,
+    custom_hook_metadata: Option<&str>,
 ) -> Result<String> {
     // Parse dest_recipient as hex (with or without 0x prefix)
     let recipient_hex = dest_recipient.trim_start_matches("0x");
@@ -180,8 +191,7 @@ pub fn derive_forwarding_address_for_hook(
     let token_id_hex = token_id.trim_start_matches("0x");
     let token_id_bytes = hex::decode(token_id_hex).context("Failed to decode token_id as hex")?;
 
-    // Parse the optional hook id. Empty or all-zero means the mailbox default hook, which is
-    // the version-1 scheme rather than a binding.
+    // Parse the optional hook id. Empty or all-zero means the mailbox default hook.
     let hook_bytes = match custom_hook_id {
         Some(hook) if !hook.trim_start_matches("0x").is_empty() => {
             let hook_hex = hook.trim_start_matches("0x");
@@ -201,25 +211,39 @@ pub fn derive_forwarding_address_for_hook(
         _ => None,
     };
 
+    // Metadata is committed alongside the hook, as its decoded bytes.
+    let metadata_bytes = match custom_hook_metadata {
+        Some(meta) if !meta.trim_start_matches("0x").is_empty() => {
+            let meta_hex = meta.trim_start_matches("0x");
+            Some(hex::decode(meta_hex).context("Failed to decode custom_hook_metadata as hex")?)
+        }
+        _ => None,
+    };
+
+    // Committing to either field selects the bound scheme. The hook keeps its fixed width
+    // (zeroes when absent) so a metadata-only binding cannot collide with a hook-bearing one.
+    let bound = hook_bytes.is_some() || metadata_bytes.is_some();
+
     // Step 1: Encode dest_domain as 32-byte big-endian (right-aligned at offset 28)
     let mut domain_bytes = [0u8; 32];
     domain_bytes[28..32].copy_from_slice(&dest_domain.to_be_bytes());
 
-    // Step 2: callDigest = sha256(destDomain_32bytes || destRecipient || tokenID [|| hookID])
+    // Step 2: callDigest = sha256(destDomain || destRecipient || tokenID [|| hookID || metadata])
     let mut hasher = Sha256::new();
     hasher.update(domain_bytes);
     hasher.update(&recipient_bytes);
     hasher.update(&token_id_bytes);
-    if let Some(hook) = &hook_bytes {
-        hasher.update(hook);
+    if bound {
+        hasher.update(hook_bytes.as_deref().unwrap_or(&[0u8; 32]));
+        hasher.update(metadata_bytes.as_deref().unwrap_or_default());
     }
     let call_digest = hasher.finalize();
 
     // Step 3: salt = sha256(version || callDigest). The version byte and the digest preimage
-    // move together, so the hook-bound and default schemes cannot collide.
+    // move together, so the bound and default schemes cannot collide.
     const FORWARD_VERSION: u8 = 1;
     const FORWARD_VERSION_HOOK: u8 = 2;
-    let version = if hook_bytes.is_some() {
+    let version = if bound {
         FORWARD_VERSION_HOOK
     } else {
         FORWARD_VERSION

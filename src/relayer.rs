@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
-use crate::client::CelestiaClient;
+use crate::client::{CelestiaClient, HookBinding};
 use crate::scanner;
 use crate::{Balance, ForwardingRequest};
 
@@ -253,6 +253,19 @@ pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
 }
 
 /// Relayer configuration
+/// Resolve the hook binding for a request. The address commits to the request's hook and
+/// metadata, so those are authoritative; the deployment-wide CUSTOM_IGP_HOOK is only a
+/// fallback for requests created before the backend tracked a hook.
+fn hook_binding<'a>(request: &'a ForwardingRequest, config: &'a RelayerConfig) -> HookBinding<'a> {
+    HookBinding {
+        hook_id: request
+            .custom_hook_id
+            .as_deref()
+            .or(config.custom_igp_hook.as_deref()),
+        metadata: request.custom_hook_metadata.as_deref(),
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct RelayerConfig {
     /// Celestia gRPC URL (port 9090). Used for balance queries, IGP fee quotes,
@@ -810,13 +823,7 @@ async fn forward_address(shared: &RelayerState, forward_addr: &str) {
             &request.dest_recipient,
             &request.token_id,
             &max_igp_fee,
-            // The address commits to its hook, so the request's hook is authoritative.
-            // Fall back to the deployment-wide hook for requests created before the
-            // backend tracked one.
-            request
-                .custom_hook_id
-                .as_deref()
-                .or(shared.config.custom_igp_hook.as_deref()),
+            hook_binding(&request, &shared.config),
         )
         .await
     {
@@ -889,11 +896,8 @@ async fn resolve_max_igp_fee(
                 .query_igp_fee(
                     request.dest_domain,
                     &request.token_id,
-                    // Quote against the same hook the forward will dispatch through.
-                    request
-                        .custom_hook_id
-                        .as_deref()
-                        .or(shared.config.custom_igp_hook.as_deref()),
+                    // Quote against the same binding the forward will dispatch through.
+                    hook_binding(request, &shared.config),
                 )
                 .await
             {

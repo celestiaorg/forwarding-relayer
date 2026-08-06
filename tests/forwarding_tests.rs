@@ -183,10 +183,10 @@ fn test_balances_equal() {
     assert!(!balances_equal(&balances1, &balances3));
 }
 
-/// Cross-implementation vector: these expected byte strings were produced by the Go
+/// Cross-implementation vectors: the expected byte strings were produced by the Go
 /// implementation in celestia-app (x/forwarding/types.DeriveForwardingAddressWithHook and
 /// DeriveForwardingAddress). If the two derivations ever diverge, deposits are sent to an
-/// address the chain will not accept a forward for, so this must stay exact.
+/// address the chain will not accept a forward for, so these must stay exact.
 #[test]
 fn test_derive_forwarding_address_hook_matches_go() {
     use bech32::{Bech32, Hrp};
@@ -196,34 +196,56 @@ fn test_derive_forwarding_address_hook_matches_go() {
         "0x00000000000000000000000042d35cc6634c0532925a3b844bc9e7595f0beb00";
     const TOKEN_ID: &str = "0x726f757465725f61707000000000000000000000000000010000000000000000";
     const HOOK_ID: &str = "0x726f757465725f706f73745f6469737061746368000000040000000000000009";
-
-    // Go: DeriveForwardingAddressWithHook(...) => version byte 0x02
-    const GO_HOOKBOUND_HEX: &str = "6f1b41767279393fd1fbec23f090fa84db7e2d28";
-    // Go: DeriveForwardingAddress(...) => version byte 0x01
-    const GO_DEFAULT_HEX: &str = "27e0c578f2c44de8ddd0bb58782069b65054b987";
+    const METADATA: &str = "0xabcdef";
 
     let hrp = Hrp::parse("celestia").unwrap();
-    let expect_hooked =
-        bech32::encode::<Bech32>(hrp, &hex::decode(GO_HOOKBOUND_HEX).unwrap()).unwrap();
-    let expect_default =
-        bech32::encode::<Bech32>(hrp, &hex::decode(GO_DEFAULT_HEX).unwrap()).unwrap();
+    let bech = |h: &str| bech32::encode::<Bech32>(hrp, &hex::decode(h).unwrap()).unwrap();
 
-    let hooked = forwarding_relayer::derive_forwarding_address_for_hook(
-        DEST_DOMAIN,
-        DEST_RECIPIENT,
-        TOKEN_ID,
-        Some(HOOK_ID),
-    )
-    .unwrap();
-    assert_eq!(hooked, expect_hooked, "hook-bound derivation must match Go");
+    // (hook, metadata, expected Go output)
+    let cases: [(Option<&str>, Option<&str>, &str); 4] = [
+        (
+            Some(HOOK_ID),
+            None,
+            "6f1b41767279393fd1fbec23f090fa84db7e2d28",
+        ),
+        (
+            Some(HOOK_ID),
+            Some(METADATA),
+            "15b80919673356e9cf6c56ab336f857635b7c29b",
+        ),
+        (
+            None,
+            Some(METADATA),
+            "d5f42de3575ee4359ffd0ef162abef858f91469f",
+        ),
+        (None, None, "27e0c578f2c44de8ddd0bb58782069b65054b987"),
+    ];
 
-    let default = derive_forwarding_address(DEST_DOMAIN, DEST_RECIPIENT, TOKEN_ID).unwrap();
-    assert_eq!(default, expect_default, "default derivation must match Go");
-    assert_ne!(hooked, default);
+    for (hook, metadata, expected_hex) in cases {
+        let got = forwarding_relayer::derive_forwarding_address_for_hook(
+            DEST_DOMAIN,
+            DEST_RECIPIENT,
+            TOKEN_ID,
+            hook,
+            metadata,
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            bech(expected_hex),
+            "derivation must match Go for hook={hook:?} metadata={metadata:?}"
+        );
+    }
+
+    // The no-binding case must also equal the plain v1 helper.
+    assert_eq!(
+        derive_forwarding_address(DEST_DOMAIN, DEST_RECIPIENT, TOKEN_ID).unwrap(),
+        bech("27e0c578f2c44de8ddd0bb58782069b65054b987")
+    );
 }
 
-/// None, empty, and the zero address all mean "mailbox default hook" and must collapse to the
-/// version-1 address, matching the chain's normalisation.
+/// None, empty, and the zero address all mean "mailbox default hook". With no metadata that
+/// must collapse to the version-1 address, matching the chain's normalisation.
 #[test]
 fn test_derive_forwarding_address_zero_hook_is_default() {
     const DEST_DOMAIN: u32 = 42161;
@@ -240,9 +262,27 @@ fn test_derive_forwarding_address_zero_hook_is_default() {
             DEST_RECIPIENT,
             TOKEN_ID,
             hook,
+            None,
         )
         .unwrap();
-        assert_eq!(got, base, "hook {:?} must derive the default address", hook);
+        assert_eq!(
+            got, base,
+            "hook {hook:?} with no metadata must be the default"
+        );
+
+        // ...but the same hook paired with metadata is a binding, not the default.
+        let bound = forwarding_relayer::derive_forwarding_address_for_hook(
+            DEST_DOMAIN,
+            DEST_RECIPIENT,
+            TOKEN_ID,
+            hook,
+            Some("0xabcdef"),
+        )
+        .unwrap();
+        assert_ne!(
+            bound, base,
+            "metadata alone must still bind for hook {hook:?}"
+        );
     }
 }
 
@@ -253,6 +293,7 @@ fn test_derive_forwarding_address_rejects_bad_hook_length() {
         "0x0000000000000000000000000000000000000000000000000000000000000001",
         "0x0000000000000000000000000000000000000000000000000000000000000002",
         Some("0xdeadbeef"),
+        None,
     )
     .unwrap_err();
     assert!(err.to_string().contains("32 bytes"), "got: {err}");
