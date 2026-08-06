@@ -253,9 +253,8 @@ pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
 }
 
 /// Relayer configuration
-/// Resolve the hook binding for a request. The address commits to the request's hook and
-/// metadata, so those are authoritative; the deployment-wide CUSTOM_IGP_HOOK is only a
-/// fallback for requests created before the backend tracked a hook.
+/// Resolve the hook binding for a request. The address commits to the request's pair, so it
+/// wins; CUSTOM_IGP_HOOK is a fallback for requests created before the backend tracked one.
 fn hook_binding<'a>(request: &'a ForwardingRequest, config: &'a RelayerConfig) -> HookBinding<'a> {
     HookBinding {
         hook_id: request
@@ -896,7 +895,7 @@ async fn resolve_max_igp_fee(
                 .query_igp_fee(
                     request.dest_domain,
                     &request.token_id,
-                    // Quote against the same binding the forward will dispatch through.
+                    // Quote against the binding the forward will dispatch through.
                     hook_binding(request, &shared.config),
                 )
                 .await

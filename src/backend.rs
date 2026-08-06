@@ -74,15 +74,13 @@ impl BackendStorage {
         )
         .context("Failed to create forwarding_requests table")?;
 
-        // Migrate databases created before the hook became part of the address derivation.
-        // Existing rows get NULL, which is exactly right: they are default-hook addresses.
+        // Migrate pre-existing databases. NULL is correct for old rows: default-hook addresses.
         for column in ["custom_hook_id", "custom_hook_metadata"] {
             if let Err(e) = conn.execute(
                 &format!("ALTER TABLE forwarding_requests ADD COLUMN {column} TEXT"),
                 [],
             ) {
-                // SQLite has no ADD COLUMN IF NOT EXISTS; a duplicate column is the expected
-                // no-op on an already-migrated database.
+                // SQLite has no ADD COLUMN IF NOT EXISTS; a duplicate column means already migrated.
                 if !e.to_string().contains("duplicate column name") {
                     return Err(e).context(format!("Failed to add {column} column"));
                 }
@@ -465,8 +463,7 @@ async fn create_request(
     State(state): State<BackendState>,
     Json(create_req): Json<CreateForwardingRequest>,
 ) -> impl IntoResponse {
-    // The hook is part of the derivation, so it must be validated alongside the rest: a
-    // request whose address does not commit to the hook it names would be rejected on chain.
+    // The hook and metadata are part of the derivation, so validate the address against them.
     match derive_forwarding_address_for_hook(
         create_req.dest_domain,
         &create_req.dest_recipient,

@@ -11,9 +11,8 @@ use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{info, warn};
 
-/// A post-dispatch hook binding. The hook and its metadata always travel together because
-/// the forwarding address commits to them as a pair: quoting or dispatching with only one of
-/// them is rejected on chain with ErrAddressMismatch.
+/// A post-dispatch hook binding. The forwarding address commits to the hook and its metadata
+/// as a pair, so they always travel together.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct HookBinding<'a> {
     pub hook_id: Option<&'a str>,
@@ -212,7 +211,7 @@ impl CelestiaClient {
     /// Query IGP fee quote for a destination domain and token via forwarding module gRPC query.
     /// When `custom_hook_id` is set, the quote is against that post-dispatch hook (e.g. an
     /// alternative IGP) so it matches what MsgForward will charge when routed through it.
-    /// `custom_hook_metadata` must match too, since hooks may price off it.
+    /// The metadata must match too, since hooks may price off it.
     pub(crate) async fn query_igp_fee(
         &self,
         dest_domain: u32,

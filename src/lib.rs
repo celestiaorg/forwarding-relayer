@@ -65,11 +65,10 @@ pub struct ForwardingRequest {
     pub dest_domain: u32,
     pub dest_recipient: String,
     pub token_id: String,
-    /// Post-dispatch hook this address is bound to, if any. The address commits to it, so the
-    /// forward must be submitted with the same hook or the chain rejects it.
+    /// Post-dispatch hook this address is bound to; the forward must carry the same one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_hook_id: Option<String>,
-    /// Hook metadata this address is bound to, if any. Committed alongside custom_hook_id.
+    /// Hook metadata this address is bound to, committed alongside custom_hook_id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_hook_metadata: Option<String>,
     pub created_at: String,
@@ -157,17 +156,12 @@ pub fn derive_forwarding_address(
 
 /// Derive a forwarding address, optionally binding it to a post-dispatch hook and metadata.
 ///
-/// x/forwarding commits both to the address. An address that commits to neither can only be
-/// forwarded through the mailbox default hook with no metadata; an address that commits to
-/// either can only be forwarded with exactly that pair. A mismatch is rejected on chain with
-/// ErrAddressMismatch.
+/// x/forwarding commits both to the address, so an address can only be forwarded with exactly
+/// the pair it was derived with; a mismatch is rejected on chain with ErrAddressMismatch.
 ///
 /// `custom_hook_id` of `None`, empty, or the zero address all mean "mailbox default hook",
-/// matching the chain's normalisation. With no metadata either, that yields the version-1
-/// address; with metadata it yields a metadata-only binding under version 2.
-///
-/// `custom_hook_metadata` is hex (0x prefix optional) and is committed as its decoded bytes,
-/// so equivalent encodings derive the same address.
+/// matching the chain's normalisation. `custom_hook_metadata` is hex (0x prefix optional),
+/// committed as decoded bytes so equivalent encodings agree.
 pub fn derive_forwarding_address_for_hook(
     dest_domain: u32,
     dest_recipient: &str,
@@ -191,7 +185,7 @@ pub fn derive_forwarding_address_for_hook(
     let token_id_hex = token_id.trim_start_matches("0x");
     let token_id_bytes = hex::decode(token_id_hex).context("Failed to decode token_id as hex")?;
 
-    // Parse the optional hook id. Empty or all-zero means the mailbox default hook.
+    // Empty or all-zero means the mailbox default hook.
     let hook_bytes = match custom_hook_id {
         Some(hook) if !hook.trim_start_matches("0x").is_empty() => {
             let hook_hex = hook.trim_start_matches("0x");
@@ -211,7 +205,7 @@ pub fn derive_forwarding_address_for_hook(
         _ => None,
     };
 
-    // Metadata is committed alongside the hook, as its decoded bytes.
+    // Committed alongside the hook, as decoded bytes.
     let metadata_bytes = match custom_hook_metadata {
         Some(meta) if !meta.trim_start_matches("0x").is_empty() => {
             let meta_hex = meta.trim_start_matches("0x");
@@ -220,8 +214,8 @@ pub fn derive_forwarding_address_for_hook(
         _ => None,
     };
 
-    // Committing to either field selects the bound scheme. The hook keeps its fixed width
-    // (zeroes when absent) so a metadata-only binding cannot collide with a hook-bearing one.
+    // The hook keeps its fixed width (zeroes when absent) so a metadata-only binding cannot
+    // collide with a hook-bearing one.
     let bound = hook_bytes.is_some() || metadata_bytes.is_some();
 
     // Step 1: Encode dest_domain as 32-byte big-endian (right-aligned at offset 28)
@@ -239,8 +233,8 @@ pub fn derive_forwarding_address_for_hook(
     }
     let call_digest = hasher.finalize();
 
-    // Step 3: salt = sha256(version || callDigest). The version byte and the digest preimage
-    // move together, so the bound and default schemes cannot collide.
+    // Step 3: salt = sha256(version || callDigest). Version and preimage move together, so the
+    // two schemes cannot collide.
     const FORWARD_VERSION: u8 = 1;
     const FORWARD_VERSION_HOOK: u8 = 2;
     let version = if bound {
