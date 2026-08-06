@@ -52,6 +52,12 @@ pub enum Command {
         /// Token ID (hex-encoded, e.g., 0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131)
         #[arg(long)]
         token_id: String,
+        /// Optional post-dispatch hook to bind the address to (hex-encoded)
+        #[arg(long)]
+        custom_hook_id: Option<String>,
+        /// Optional hook metadata to bind the address to (hex-encoded)
+        #[arg(long)]
+        custom_hook_metadata: Option<String>,
     },
     /// Derive a private key from a mnemonic
     DerivePrivateKey {
@@ -68,6 +74,12 @@ pub struct ForwardingRequest {
     pub dest_domain: u32,
     pub dest_recipient: String,
     pub token_id: String,
+    /// Post-dispatch hook this address is bound to; the forward must carry the same one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_hook_id: Option<String>,
+    /// Hook metadata this address is bound to, committed alongside custom_hook_id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_hook_metadata: Option<String>,
     pub created_at: String,
 }
 
@@ -78,6 +90,12 @@ pub struct CreateForwardingRequest {
     pub dest_domain: u32,
     pub dest_recipient: String,
     pub token_id: String,
+    /// Optional post-dispatch hook the address was derived with. Omit for the mailbox default.
+    #[serde(default)]
+    pub custom_hook_id: Option<String>,
+    /// Optional hook metadata the address was derived with. Committed alongside the hook.
+    #[serde(default)]
+    pub custom_hook_metadata: Option<String>,
 }
 
 /// Token balance
@@ -126,21 +144,30 @@ pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
     Ok(hex::encode(private_key_bytes))
 }
 
-/// Derive a forwarding address from dest_domain, dest_recipient, and token_id
+/// Derive a forwarding address, optionally binding it to a post-dispatch hook and metadata.
 ///
 /// Algorithm from celestia-app/x/forwarding/types/address.go:
-/// 1. callDigest = sha256(destDomain_32bytes || destRecipient || tokenID)
-/// 2. salt = sha256(ForwardVersion || callDigest)
+/// 1. callDigest = sha256(destDomain_32bytes || destRecipient || tokenID [|| hookID || metadata])
+/// 2. salt = sha256(version || callDigest)
 /// 3. address = address.Module("forwarding", salt)[:20]
 /// 4. Encode as bech32 with "celestia" prefix
 ///
 /// Where address.Module(name, key) is:
 ///   th = sha256(typ)
 ///   sha256(th || name || 0x00 || key)
+///
+/// x/forwarding commits the hook and metadata to the address, so an address can only be
+/// forwarded with exactly the pair it was derived with; a mismatch is rejected on chain with
+/// ErrAddressMismatch. `custom_hook_id` of `None`, empty, or the zero address all mean
+/// "mailbox default hook", matching the chain's normalisation, and with no metadata either the
+/// address commits to nothing. `custom_hook_metadata` is hex (0x prefix optional), committed as
+/// decoded bytes so equivalent encodings agree.
 pub fn derive_forwarding_address(
     dest_domain: u32,
     dest_recipient: &str,
     token_id: &str,
+    custom_hook_id: Option<&str>,
+    custom_hook_metadata: Option<&str>,
 ) -> Result<String> {
     // Parse dest_recipient as hex (with or without 0x prefix)
     let recipient_hex = dest_recipient.trim_start_matches("0x");
@@ -158,21 +185,65 @@ pub fn derive_forwarding_address(
     let token_id_hex = token_id.trim_start_matches("0x");
     let token_id_bytes = hex::decode(token_id_hex).context("Failed to decode token_id as hex")?;
 
+    // Empty or all-zero means the mailbox default hook.
+    let hook_bytes = match custom_hook_id {
+        Some(hook) if !hook.trim_start_matches("0x").is_empty() => {
+            let hook_hex = hook.trim_start_matches("0x");
+            let bytes = hex::decode(hook_hex).context("Failed to decode custom_hook_id as hex")?;
+            if bytes.len() != 32 {
+                anyhow::bail!(
+                    "custom_hook_id must be exactly 32 bytes, got {}",
+                    bytes.len()
+                );
+            }
+            if bytes.iter().all(|b| *b == 0) {
+                None
+            } else {
+                Some(bytes)
+            }
+        }
+        _ => None,
+    };
+
+    // Committed alongside the hook, as decoded bytes.
+    let metadata_bytes = match custom_hook_metadata {
+        Some(meta) if !meta.trim_start_matches("0x").is_empty() => {
+            let meta_hex = meta.trim_start_matches("0x");
+            Some(hex::decode(meta_hex).context("Failed to decode custom_hook_metadata as hex")?)
+        }
+        _ => None,
+    };
+
+    // The hook keeps its fixed width (zeroes when absent) so a metadata-only binding cannot
+    // collide with a hook-bearing one.
+    let bound = hook_bytes.is_some() || metadata_bytes.is_some();
+
     // Step 1: Encode dest_domain as 32-byte big-endian (right-aligned at offset 28)
     let mut domain_bytes = [0u8; 32];
     domain_bytes[28..32].copy_from_slice(&dest_domain.to_be_bytes());
 
-    // Step 2: callDigest = sha256(destDomain_32bytes || destRecipient || tokenID)
+    // Step 2: callDigest = sha256(destDomain || destRecipient || tokenID [|| hookID || metadata])
     let mut hasher = Sha256::new();
     hasher.update(domain_bytes);
     hasher.update(&recipient_bytes);
     hasher.update(&token_id_bytes);
+    if bound {
+        hasher.update(hook_bytes.as_deref().unwrap_or(&[0u8; 32]));
+        hasher.update(metadata_bytes.as_deref().unwrap_or_default());
+    }
     let call_digest = hasher.finalize();
 
-    // Step 3: salt = sha256(ForwardVersion || callDigest)
+    // Step 3: salt = sha256(version || callDigest). Version and preimage move together, so the
+    // two schemes cannot collide.
     const FORWARD_VERSION: u8 = 1;
+    const FORWARD_VERSION_HOOK: u8 = 2;
+    let version = if bound {
+        FORWARD_VERSION_HOOK
+    } else {
+        FORWARD_VERSION
+    };
     let mut hasher = Sha256::new();
-    hasher.update([FORWARD_VERSION]);
+    hasher.update([version]);
     hasher.update(call_digest);
     let salt = hasher.finalize();
 

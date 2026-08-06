@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, warn};
 
-use crate::client::CelestiaClient;
+use crate::client::{CelestiaClient, HookBinding};
 use crate::scanner;
 use crate::{Balance, ForwardingRequest};
 
@@ -253,6 +253,18 @@ pub fn balances_equal(a: &[Balance], b: &[Balance]) -> bool {
 }
 
 /// Relayer configuration
+/// Resolve the hook binding for a request. The address commits to the request's pair, so it
+/// wins; CUSTOM_IGP_HOOK is a fallback for requests created before the backend tracked one.
+fn hook_binding<'a>(request: &'a ForwardingRequest, config: &'a RelayerConfig) -> HookBinding<'a> {
+    HookBinding {
+        hook_id: request
+            .custom_hook_id
+            .as_deref()
+            .or(config.custom_igp_hook.as_deref()),
+        metadata: request.custom_hook_metadata.as_deref(),
+    }
+}
+
 #[derive(Parser, Debug)]
 pub struct RelayerConfig {
     /// Celestia gRPC endpoints (port 9090). Used for balance queries, IGP fee
@@ -286,6 +298,14 @@ pub struct RelayerConfig {
     /// Relayer secp256k1 private key hex (for signing transactions)
     #[arg(long, env = "PRIVATE_KEY_HEX")]
     pub private_key_hex: String,
+
+    /// Optional custom IGP hook id (hex) to route each forward's interchain gas
+    /// payment through, e.g. an alternative IGP this relayer watches. When set, it
+    /// is passed as MsgForward.custom_hook_id so the fee is paid to that IGP (and
+    /// this relayer, rather than the mailbox default hook / default relayer).
+    /// Empty/unset => mailbox default hook (unchanged behavior).
+    #[arg(long, env = "CUSTOM_IGP_HOOK")]
+    pub custom_igp_hook: Option<String>,
 
     /// Signer-balance metrics refresh interval in seconds.
     #[arg(long, env = "POLL_INTERVAL", default_value = "6")]
@@ -807,6 +827,7 @@ async fn forward_address(shared: &RelayerState, forward_addr: &str) {
             &request.dest_recipient,
             &request.token_id,
             &max_igp_fee,
+            hook_binding(&request, &shared.config),
         )
         .await
     {
@@ -876,7 +897,12 @@ async fn resolve_max_igp_fee(
         None => {
             let quoted_fee = match shared
                 .celestia
-                .query_igp_fee(request.dest_domain, &request.token_id)
+                .query_igp_fee(
+                    request.dest_domain,
+                    &request.token_id,
+                    // Quote against the binding the forward will dispatch through.
+                    hook_binding(request, &shared.config),
+                )
                 .await
             {
                 Ok(fee) => fee,

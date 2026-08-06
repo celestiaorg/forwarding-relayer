@@ -30,9 +30,12 @@ async fn test_backend_api() {
     let dest_domain = 42161;
     let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
     let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
-    let forward_addr = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
+    let forward_addr =
+        derive_forwarding_address(dest_domain, dest_recipient, token_id, None, None).unwrap();
 
     let request = ForwardingRequest {
+        custom_hook_id: None,
+        custom_hook_metadata: None,
         forward_addr: forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
@@ -94,7 +97,8 @@ fn test_derive_forwarding_address() {
     let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
     let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
 
-    let address = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
+    let address =
+        derive_forwarding_address(dest_domain, dest_recipient, token_id, None, None).unwrap();
 
     // Should be a valid bech32 address with celestia prefix
     assert!(address.starts_with("celestia1"));
@@ -125,9 +129,12 @@ async fn test_idempotent_create() {
     let dest_domain = 42161u32;
     let dest_recipient = "0x000000000000000000000000742d35Cc6634C0532925a3b844Bc9e7595f00000";
     let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
-    let forward_addr = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
+    let forward_addr =
+        derive_forwarding_address(dest_domain, dest_recipient, token_id, None, None).unwrap();
 
     let create_req = CreateForwardingRequest {
+        custom_hook_id: None,
+        custom_hook_metadata: None,
         forward_addr: forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
@@ -161,6 +168,8 @@ async fn test_idempotent_create() {
 
     // POST with mismatched forward_addr - should be rejected
     let bad_req = CreateForwardingRequest {
+        custom_hook_id: None,
+        custom_hook_metadata: None,
         forward_addr: "celestia1bogus".to_string(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
@@ -282,9 +291,11 @@ async fn test_backend_metrics_endpoint() {
     let dest_recipient = "0x000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
     let token_id = "0x00000000000000000000000031b5234A896FbC4b3e2F7237592D054716762131";
     let metrics_forward_addr =
-        derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
+        derive_forwarding_address(dest_domain, dest_recipient, token_id, None, None).unwrap();
 
     let create_req = forwarding_relayer::CreateForwardingRequest {
+        custom_hook_id: None,
+        custom_hook_metadata: None,
         forward_addr: metrics_forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
