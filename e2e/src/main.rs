@@ -503,7 +503,7 @@ fn derive(ctx: &Ctx, recipient: &str) -> Result<(String, String)> {
         &dest_recipient,
         &ctx.token_id,
         None,
-        None
+        None,
     )?;
     Ok((dest_recipient, forward_addr))
 }
