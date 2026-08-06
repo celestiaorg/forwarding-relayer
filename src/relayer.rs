@@ -810,7 +810,13 @@ async fn forward_address(shared: &RelayerState, forward_addr: &str) {
             &request.dest_recipient,
             &request.token_id,
             &max_igp_fee,
-            shared.config.custom_igp_hook.as_deref(),
+            // The address commits to its hook, so the request's hook is authoritative.
+            // Fall back to the deployment-wide hook for requests created before the
+            // backend tracked one.
+            request
+                .custom_hook_id
+                .as_deref()
+                .or(shared.config.custom_igp_hook.as_deref()),
         )
         .await
     {
@@ -883,7 +889,11 @@ async fn resolve_max_igp_fee(
                 .query_igp_fee(
                     request.dest_domain,
                     &request.token_id,
-                    shared.config.custom_igp_hook.as_deref(),
+                    // Quote against the same hook the forward will dispatch through.
+                    request
+                        .custom_hook_id
+                        .as_deref()
+                        .or(shared.config.custom_igp_hook.as_deref()),
                 )
                 .await
             {

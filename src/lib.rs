@@ -65,6 +65,10 @@ pub struct ForwardingRequest {
     pub dest_domain: u32,
     pub dest_recipient: String,
     pub token_id: String,
+    /// Post-dispatch hook this address is bound to, if any. The address commits to it, so the
+    /// forward must be submitted with the same hook or the chain rejects it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_hook_id: Option<String>,
     pub created_at: String,
 }
 
@@ -75,6 +79,9 @@ pub struct CreateForwardingRequest {
     pub dest_domain: u32,
     pub dest_recipient: String,
     pub token_id: String,
+    /// Optional post-dispatch hook the address was derived with. Omit for the mailbox default.
+    #[serde(default)]
+    pub custom_hook_id: Option<String>,
 }
 
 /// Token balance
@@ -139,6 +146,24 @@ pub fn derive_forwarding_address(
     dest_recipient: &str,
     token_id: &str,
 ) -> Result<String> {
+    derive_forwarding_address_for_hook(dest_domain, dest_recipient, token_id, None)
+}
+
+/// Derive a forwarding address, optionally binding it to a post-dispatch hook.
+///
+/// x/forwarding commits the hook to the address, so an address derived without a hook can
+/// only be forwarded through the mailbox default hook, and an address derived with one can
+/// only be forwarded through that exact hook. A mismatch is rejected on chain with
+/// ErrAddressMismatch.
+///
+/// `custom_hook_id` of `None`, empty, or the zero address all mean "mailbox default hook"
+/// and produce the version-1 address, matching the chain's normalisation.
+pub fn derive_forwarding_address_for_hook(
+    dest_domain: u32,
+    dest_recipient: &str,
+    token_id: &str,
+    custom_hook_id: Option<&str>,
+) -> Result<String> {
     // Parse dest_recipient as hex (with or without 0x prefix)
     let recipient_hex = dest_recipient.trim_start_matches("0x");
     let recipient_bytes =
@@ -155,21 +180,52 @@ pub fn derive_forwarding_address(
     let token_id_hex = token_id.trim_start_matches("0x");
     let token_id_bytes = hex::decode(token_id_hex).context("Failed to decode token_id as hex")?;
 
+    // Parse the optional hook id. Empty or all-zero means the mailbox default hook, which is
+    // the version-1 scheme rather than a binding.
+    let hook_bytes = match custom_hook_id {
+        Some(hook) if !hook.trim_start_matches("0x").is_empty() => {
+            let hook_hex = hook.trim_start_matches("0x");
+            let bytes = hex::decode(hook_hex).context("Failed to decode custom_hook_id as hex")?;
+            if bytes.len() != 32 {
+                anyhow::bail!(
+                    "custom_hook_id must be exactly 32 bytes, got {}",
+                    bytes.len()
+                );
+            }
+            if bytes.iter().all(|b| *b == 0) {
+                None
+            } else {
+                Some(bytes)
+            }
+        }
+        _ => None,
+    };
+
     // Step 1: Encode dest_domain as 32-byte big-endian (right-aligned at offset 28)
     let mut domain_bytes = [0u8; 32];
     domain_bytes[28..32].copy_from_slice(&dest_domain.to_be_bytes());
 
-    // Step 2: callDigest = sha256(destDomain_32bytes || destRecipient || tokenID)
+    // Step 2: callDigest = sha256(destDomain_32bytes || destRecipient || tokenID [|| hookID])
     let mut hasher = Sha256::new();
     hasher.update(domain_bytes);
     hasher.update(&recipient_bytes);
     hasher.update(&token_id_bytes);
+    if let Some(hook) = &hook_bytes {
+        hasher.update(hook);
+    }
     let call_digest = hasher.finalize();
 
-    // Step 3: salt = sha256(ForwardVersion || callDigest)
+    // Step 3: salt = sha256(version || callDigest). The version byte and the digest preimage
+    // move together, so the hook-bound and default schemes cannot collide.
     const FORWARD_VERSION: u8 = 1;
+    const FORWARD_VERSION_HOOK: u8 = 2;
+    let version = if hook_bytes.is_some() {
+        FORWARD_VERSION_HOOK
+    } else {
+        FORWARD_VERSION
+    };
     let mut hasher = Sha256::new();
-    hasher.update([FORWARD_VERSION]);
+    hasher.update([version]);
     hasher.update(call_digest);
     let salt = hasher.finalize();
 

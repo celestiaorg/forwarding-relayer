@@ -33,6 +33,7 @@ async fn test_backend_api() {
     let forward_addr = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
 
     let request = ForwardingRequest {
+        custom_hook_id: None,
         forward_addr: forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
@@ -128,6 +129,7 @@ async fn test_idempotent_create() {
     let forward_addr = derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
 
     let create_req = CreateForwardingRequest {
+        custom_hook_id: None,
         forward_addr: forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
@@ -161,6 +163,7 @@ async fn test_idempotent_create() {
 
     // POST with mismatched forward_addr - should be rejected
     let bad_req = CreateForwardingRequest {
+        custom_hook_id: None,
         forward_addr: "celestia1bogus".to_string(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
@@ -285,6 +288,7 @@ async fn test_backend_metrics_endpoint() {
         derive_forwarding_address(dest_domain, dest_recipient, token_id).unwrap();
 
     let create_req = forwarding_relayer::CreateForwardingRequest {
+        custom_hook_id: None,
         forward_addr: metrics_forward_addr.clone(),
         dest_domain,
         dest_recipient: dest_recipient.to_string(),
