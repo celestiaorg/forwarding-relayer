@@ -4,12 +4,15 @@ use clap::Parser;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod auth;
 mod backend;
 mod client;
 mod metrics;
 mod proto;
 mod relayer;
 mod scanner;
+
+pub(crate) use auth::{parse_endpoint_specs, redact_endpoint_specs, AuthToken, EndpointSpec};
 
 // Re-export public types from modules
 pub use backend::{

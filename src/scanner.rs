@@ -35,7 +35,7 @@ use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info, warn};
 
 use crate::relayer::RetryStore;
-use crate::{Balance, ForwardingRequest};
+use crate::{parse_endpoint_specs, AuthToken, Balance, EndpointSpec, ForwardingRequest};
 
 /// Delay before re-establishing the block subscription after it ends or errors.
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
@@ -147,6 +147,41 @@ fn derive_ws_url(rpc_url: &str) -> String {
     format!("{ws}/websocket")
 }
 
+/// Strip HTTP Basic userinfo (`user[:pass]@`) from a URL so the token spliced into
+/// `ws_url` by [`with_auth_token`] never reaches logs on a WS connect error. The
+/// credential is replaced with `***`; credential-free URLs are returned unchanged.
+fn redact_userinfo(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    // The authority ends at the first '/', '?', or '#'.
+    let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(auth_end);
+    match authority.rsplit_once('@') {
+        Some((_creds, host)) => format!("{scheme}://***@{host}{tail}"),
+        None => url.to_string(),
+    }
+}
+
+/// Build the connection URL for an endpoint, splicing `token` in as HTTP Basic
+/// userinfo when set. The token is placed in the **password** field with an empty
+/// username (`:token@host`), so the wire credential is `Authorization: Basic
+/// base64(":token")` on both the HTTP requests and the WebSocket handshake.
+///
+/// The token is restricted to URL-safe characters, so it is inserted verbatim.
+/// Returns the URL unchanged when no token is given. The token comes from the
+/// `|token` part of the `CELESTIA_RPC` entry (never the URL itself), and is spliced
+/// in here only for the connection, so it never appears in the stored/logged URL.
+fn with_auth_token(url: &str, token: Option<&str>) -> Result<String> {
+    let Some(token) = token else {
+        return Ok(url.to_string());
+    };
+    let (scheme, rest) = url
+        .split_once("://")
+        .with_context(|| format!("Invalid CometBFT RPC URL (expected scheme://host): {url}"))?;
+    Ok(format!("{scheme}://:{token}@{rest}"))
+}
+
 async fn current_height(http: &HttpClient) -> Result<u64> {
     let status = http.status().await.context("Failed to query node status")?;
     Ok(status.sync_info.latest_block_height.value())
@@ -169,20 +204,25 @@ struct RpcPool {
 }
 
 impl RpcPool {
-    /// Parse a comma-separated list of RPC URLs (surrounding whitespace trimmed,
-    /// empty entries skipped) into a pool, building one HTTP client per endpoint.
-    /// A single URL yields a one-endpoint pool, i.e. the original no-failover behavior.
+    /// Parse a comma-separated list of `url|token` (or bare `url`) endpoints into a
+    /// pool, building one HTTP client per endpoint. A single URL yields a one-endpoint
+    /// pool, i.e. the original no-failover behavior.
+    ///
+    /// Each endpoint's optional token is spliced into *its* URL as HTTP Basic
+    /// userinfo, so tendermint-rpc authenticates that endpoint's HTTP calls and WS
+    /// subscription. The token lives in the `|token` part, so the stored `url` used
+    /// for logging is always credential-free.
     fn new(spec: &str) -> Result<Self> {
-        let endpoints = spec
-            .split(',')
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|url| {
+        let endpoints = parse_endpoint_specs(spec)?
+            .into_iter()
+            .map(|EndpointSpec { url, token }| {
+                let conn_url = with_auth_token(&url, token.as_ref().map(AuthToken::as_str))?;
+                let http = HttpClient::new(conn_url.as_str())
+                    .with_context(|| format!("Invalid CometBFT RPC URL: {url}"))?;
                 Ok(RpcEndpoint {
-                    url: url.to_string(),
-                    http: HttpClient::new(url)
-                        .with_context(|| format!("Invalid CometBFT RPC URL: {url}"))?,
-                    ws_url: derive_ws_url(url),
+                    url,
+                    http,
+                    ws_url: derive_ws_url(&conn_url),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -331,7 +371,7 @@ async fn scan_session(
 ) -> Result<()> {
     let (ws, driver) = WebSocketClient::new(ws_url)
         .await
-        .with_context(|| format!("Failed to connect WebSocket at {ws_url}"))?;
+        .with_context(|| format!("Failed to connect WebSocket at {}", redact_userinfo(ws_url)))?;
     let driver_handle = tokio::spawn(async move { driver.run().await });
     let mut subscription = ws
         .subscribe(Query::from(EventType::NewBlock))
@@ -520,5 +560,119 @@ mod tests {
     fn empty_block_yields_nothing() {
         let deposits = deposits_from_events(std::iter::empty());
         assert!(deposits.is_empty());
+    }
+
+    #[test]
+    fn redacts_basic_userinfo() {
+        // token-as-username and user:pass forms are both stripped, host preserved.
+        assert_eq!(
+            redact_userinfo("https://tok3n@rpc.example.com:26657"),
+            "https://***@rpc.example.com:26657"
+        );
+        assert_eq!(
+            redact_userinfo("https://user:pass@rpc.example.com:26657/path?q=1"),
+            "https://***@rpc.example.com:26657/path?q=1"
+        );
+    }
+
+    #[test]
+    fn leaves_credential_free_urls_unchanged() {
+        assert_eq!(
+            redact_userinfo("http://localhost:26657"),
+            "http://localhost:26657"
+        );
+        // a '@' in the path (not the authority) must not be treated as userinfo.
+        assert_eq!(
+            redact_userinfo("http://host:26657/a@b"),
+            "http://host:26657/a@b"
+        );
+        assert_eq!(redact_userinfo("not-a-url"), "not-a-url");
+    }
+
+    #[test]
+    fn ws_url_preserves_userinfo_for_auth() {
+        // derive_ws_url must keep credentials so the WS handshake can authenticate.
+        assert_eq!(
+            derive_ws_url("https://tok@host:26657"),
+            "wss://tok@host:26657/websocket"
+        );
+    }
+
+    #[test]
+    fn with_auth_token_splices_userinfo() {
+        // Token goes in the password field (empty username) → `:token@host`.
+        assert_eq!(
+            with_auth_token("https://rpc.example.com:26657", Some("abc123")).unwrap(),
+            "https://:abc123@rpc.example.com:26657"
+        );
+    }
+
+    #[test]
+    fn with_auth_token_noop_when_absent() {
+        assert_eq!(
+            with_auth_token("http://host:26657", None).unwrap(),
+            "http://host:26657"
+        );
+    }
+
+    /// Drive a real `tendermint_rpc::HttpClient` — built exactly as the scanner
+    /// builds it, via [`with_auth_token`] — against a throwaway server that records
+    /// the `Authorization` header of the request it receives, then returns 401. We
+    /// only assert what reached the wire, so a valid RPC response is unnecessary.
+    /// This proves the *actual* library emits Basic auth (not just that we format a
+    /// URL), and pins the exact header value the e2e auth-proxy must match.
+    async fn captured_auth_header(token: Option<&str>) -> Option<String> {
+        use std::sync::{Arc, Mutex};
+        use tendermint_rpc::Client;
+
+        let slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let slot_handler = slot.clone();
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |headers: axum::http::HeaderMap| {
+                let slot_handler = slot_handler.clone();
+                async move {
+                    // The handler runs before the 401 is flushed, so once the
+                    // client's request completes below, this has already written.
+                    *slot_handler.lock().unwrap() = headers
+                        .get(axum::http::header::AUTHORIZATION)
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    axum::http::StatusCode::UNAUTHORIZED
+                }
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let base = format!("http://127.0.0.1:{}", addr.port());
+        let url = with_auth_token(&base, token).unwrap();
+        let http = HttpClient::new(url.as_str()).unwrap();
+        // Errors (server 401s) — we only care about the header it captured.
+        let _ = http.status().await;
+
+        let captured = slot.lock().unwrap().clone();
+        server.abort();
+        captured
+    }
+
+    #[tokio::test]
+    async fn rpc_sends_basic_auth_when_token_set() {
+        // The token is spliced as the Basic *password* with an empty username
+        // (`:token@host`), so the wire credential is base64(":e2e-secret-token").
+        // This empty-username form is the one both reqwest and tendermint encode
+        // identically, so the server sees a single unambiguous value. It is the
+        // exact header docker-compose.auth.yml's nginx proxy requires; if the token
+        // changes, that config's expected value must change too.
+        let got = captured_auth_header(Some("e2e-secret-token")).await;
+        assert_eq!(got.as_deref(), Some("Basic OmUyZS1zZWNyZXQtdG9rZW4="));
+    }
+
+    #[tokio::test]
+    async fn rpc_sends_no_auth_when_token_absent() {
+        let got = captured_auth_header(None).await;
+        assert_eq!(got, None);
     }
 }

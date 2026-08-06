@@ -8,14 +8,18 @@ use futures::future::BoxFuture;
 use metrics::counter;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tonic::metadata::AsciiMetadataValue;
+use tonic::service::interceptor::InterceptedService;
+use tonic::service::Interceptor;
 use tonic::transport::{Channel, Endpoint};
+use tonic::{Request, Status};
 use tracing::{info, warn};
 
 use crate::proto::celestia::forwarding::v1::{
     query_client::QueryClient as ForwardingQueryClient, MsgForward, QueryQuoteForwardingFeeRequest,
 };
 use crate::proto::cosmos::base::v1beta1::Coin;
-use crate::Balance;
+use crate::{parse_endpoint_specs, AuthToken, Balance, EndpointSpec};
 
 /// Timeout for gRPC queries (balance, fee).
 const GRPC_QUERY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -29,22 +33,78 @@ impl prost::Name for MsgForward {
     const PACKAGE: &'static str = "celestia.forwarding.v1";
 }
 
-/// One Celestia gRPC endpoint: a lazily-connected channel for queries and a
-/// lumina tx client bound to the same URL for submissions.
+/// gRPC metadata key carrying the optional auth token, e.g. for a
+/// token-gated gRPC gateway in front of the Celestia node.
+const AUTH_METADATA_KEY: &str = "x-token";
+
+/// tonic interceptor that attaches the optional `x-token` auth metadata to every
+/// request made over a query channel. A `None` token is a no-op, preserving the
+/// original unauthenticated behavior.
+#[derive(Clone)]
+struct AuthInterceptor {
+    token: Option<AsciiMetadataValue>,
+}
+
+impl Interceptor for AuthInterceptor {
+    fn call(&mut self, mut request: Request<()>) -> Result<Request<()>, Status> {
+        if let Some(token) = &self.token {
+            request
+                .metadata_mut()
+                .insert(AUTH_METADATA_KEY, token.clone());
+        }
+        Ok(request)
+    }
+}
+
+/// A query channel with the `x-token` auth interceptor baked in. Query clients are
+/// built from this via `QueryClient::new`, so a query can never be issued on an
+/// unauthenticated channel — there is no bare `Channel` to accidentally reach for.
+type AuthenticatedChannel = InterceptedService<Channel, AuthInterceptor>;
+
+/// One Celestia gRPC endpoint: a lazily-connected authenticated channel for queries
+/// and a lumina tx client bound to the same URL for submissions.
 struct GrpcEndpoint {
     url: String,
-    channel: Channel,
+    channel: AuthenticatedChannel,
     tx_client: GrpcClient,
 }
 
-/// Split a comma-separated gRPC URL spec into individual URLs (surrounding
-/// whitespace trimmed, empty entries skipped).
-fn parse_grpc_urls(spec: &str) -> Vec<String> {
-    spec.split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .collect()
+impl GrpcEndpoint {
+    /// Build one lazily-connected endpoint from its spec: a query channel with the
+    /// `x-token` interceptor baked in, plus a lumina tx client carrying the same
+    /// token. Both stay unauthenticated when the spec has no token.
+    fn build(spec: EndpointSpec, private_key_hex: &str) -> Result<Self> {
+        let EndpointSpec { url, token } = spec;
+
+        let channel = Endpoint::new(url.clone())
+            .with_context(|| format!("Invalid CELESTIA_GRPC URL (expected http/https): {url}"))?
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(GRPC_QUERY_TIMEOUT)
+            .connect_lazy();
+        let channel = InterceptedService::new(
+            channel,
+            AuthInterceptor {
+                token: token.as_ref().map(AuthToken::metadata_value),
+            },
+        );
+
+        // lumina tx endpoint: this endpoint's own `x-token` metadata.
+        let mut tx_endpoint = celestia_grpc::Endpoint::new(url.clone());
+        if let Some(token) = &token {
+            tx_endpoint = tx_endpoint.metadata(AUTH_METADATA_KEY, token.as_str());
+        }
+        let tx_client = GrpcClient::builder()
+            .url(tx_endpoint)
+            .private_key_hex(private_key_hex)
+            .build()
+            .with_context(|| format!("Failed to initialize Celestia gRPC tx client for {url}"))?;
+
+        Ok(GrpcEndpoint {
+            url,
+            channel,
+            tx_client,
+        })
+    }
 }
 
 /// Celestia client for balance queries and transaction submission.
@@ -63,35 +123,18 @@ pub(crate) struct CelestiaClient {
 
 impl CelestiaClient {
     /// Creates and returns a new CelestiaClient using the provided private key.
-    /// `grpc_urls` may be a comma-separated list of equivalent endpoints, e.g.
-    /// `http://node-a:9090,http://node-b:9090`; a single URL yields a
-    /// one-endpoint pool, i.e. the original no-failover behavior.
+    /// `grpc_urls` is a comma-separated list of `url|token` (or bare `url`)
+    /// endpoints, e.g. `http://node-a:9090|tokA,http://node-b:9090`; the first is
+    /// the preferred primary and the rest are fallbacks.
+    ///
+    /// Each endpoint's optional token is sent as `x-token` gRPC metadata on every
+    /// request to *that* endpoint (both queries and submissions) — for a token-gated
+    /// gateway. An endpoint with no token stays unauthenticated.
     pub(crate) async fn new(grpc_urls: String, private_key_hex: String) -> Result<Self> {
         let (private_key_hex, signer_address) = Self::prepare_private_key(&private_key_hex)?;
-        let endpoints = parse_grpc_urls(&grpc_urls)
+        let endpoints = parse_endpoint_specs(&grpc_urls)?
             .into_iter()
-            .map(|url| {
-                let endpoint = Endpoint::new(url.clone())
-                    .with_context(|| {
-                        format!("Invalid CELESTIA_GRPC URL (expected http/https): {url}")
-                    })?
-                    .connect_timeout(Duration::from_secs(10))
-                    .timeout(GRPC_QUERY_TIMEOUT);
-
-                let tx_client = GrpcClient::builder()
-                    .url(&url)
-                    .private_key_hex(private_key_hex.as_str())
-                    .build()
-                    .with_context(|| {
-                        format!("Failed to initialize Celestia gRPC tx client for {url}")
-                    })?;
-
-                Ok(GrpcEndpoint {
-                    channel: endpoint.connect_lazy(),
-                    url,
-                    tx_client,
-                })
-            })
+            .map(|spec| GrpcEndpoint::build(spec, private_key_hex.as_str()))
             .collect::<Result<Vec<_>>>()?;
         anyhow::ensure!(
             !endpoints.is_empty(),
@@ -323,20 +366,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_comma_separated_urls_with_whitespace() {
+    fn interceptor_inserts_x_token_when_set() {
+        let mut interceptor = AuthInterceptor {
+            token: Some(AsciiMetadataValue::from_static("secret-token")),
+        };
+        let request = interceptor.call(Request::new(())).unwrap();
         assert_eq!(
-            parse_grpc_urls(" http://a:9090 , http://b:9090,,http://c:9090 "),
-            vec!["http://a:9090", "http://b:9090", "http://c:9090"]
+            request
+                .metadata()
+                .get(AUTH_METADATA_KEY)
+                .and_then(|v| v.to_str().ok()),
+            Some("secret-token")
         );
     }
 
     #[test]
-    fn single_url_yields_one_endpoint() {
-        assert_eq!(parse_grpc_urls("http://a:9090"), vec!["http://a:9090"]);
+    fn interceptor_is_noop_when_unset() {
+        let mut interceptor = AuthInterceptor { token: None };
+        let request = interceptor.call(Request::new(())).unwrap();
+        assert!(request.metadata().get(AUTH_METADATA_KEY).is_none());
     }
 
-    #[test]
-    fn empty_spec_yields_no_urls() {
-        assert!(parse_grpc_urls(" , ").is_empty());
+    // A valid secp256k1 key (scalar = 1) for constructing a client offline; the
+    // channel connects lazily so no network is touched.
+    const TEST_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+
+    #[tokio::test]
+    async fn builds_without_auth_token() {
+        let client = CelestiaClient::new("http://localhost:9090".to_string(), TEST_KEY.to_string())
+            .await
+            .expect("client must build with no auth token (unauthenticated node)");
+        assert_eq!(client.endpoint_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn builds_with_per_endpoint_auth_tokens() {
+        let client = CelestiaClient::new(
+            "http://a:9090|tokA,http://b:9090|tokB".to_string(),
+            TEST_KEY.to_string(),
+        )
+        .await
+        .expect("client must build with per-endpoint auth tokens");
+        assert_eq!(client.endpoint_count(), 2);
     }
 }
