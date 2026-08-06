@@ -380,6 +380,8 @@ impl Ctx {
             dest_domain: self.dest_domain,
             dest_recipient: dest_recipient.to_string(),
             token_id: self.token_id.clone(),
+            custom_hook_id: None,
+            custom_hook_metadata: None,
         };
         let resp = self
             .http
@@ -500,6 +502,8 @@ fn derive(ctx: &Ctx, recipient: &str) -> Result<(String, String)> {
         ctx.dest_domain,
         &dest_recipient,
         &ctx.token_id,
+        None,
+        None
     )?;
     Ok((dest_recipient, forward_addr))
 }
