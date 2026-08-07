@@ -25,7 +25,12 @@ async fn main() -> Result<()> {
         Command::Backend(config) => {
             forwarding_relayer::init_metrics_exporter(config.metrics_port)?;
             // Create and run backend
-            let backend = Backend::new(config.port, config.db_path, config.metrics_port.is_some())?;
+            let backend = Backend::with_rate_limiter(
+                config.port,
+                config.db_path,
+                config.metrics_port.is_some(),
+                config.rate_limit_config,
+            )?;
             backend.serve().await
         }
         Command::DeriveAddress {
