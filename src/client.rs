@@ -243,10 +243,19 @@ impl CelestiaClient {
             .collect())
     }
 
-    /// Query IGP fee quote for a destination domain and token via forwarding module gRPC query
-    pub(crate) async fn query_igp_fee(&self, dest_domain: u32, token_id: &str) -> Result<String> {
+    /// Query IGP fee quote for a destination domain and token via forwarding module gRPC query.
+    /// When `custom_hook_id` is set, the quote is against that post-dispatch hook (e.g. an
+    /// alternative IGP) so it matches what MsgForward will charge when routed through it.
+    pub(crate) async fn query_igp_fee(
+        &self,
+        dest_domain: u32,
+        token_id: &str,
+        custom_hook_id: Option<&str>,
+    ) -> Result<String> {
+        let custom_hook_id = custom_hook_id.unwrap_or_default().to_string();
         let result = self
             .with_failover("IGP fee query", |endpoint| {
+                let custom_hook_id = custom_hook_id.clone();
                 Box::pin(async move {
                     let mut client = ForwardingQueryClient::new(endpoint.channel.clone());
                     let response = tokio::time::timeout(
@@ -254,6 +263,7 @@ impl CelestiaClient {
                         client.quote_forwarding_fee(QueryQuoteForwardingFeeRequest {
                             dest_domain,
                             token_id: token_id.to_string(),
+                            custom_hook_id,
                         }),
                     )
                     .await
@@ -293,6 +303,7 @@ impl CelestiaClient {
         dest_recipient: &str,
         token_id: &str,
         max_igp_fee: &str,
+        custom_hook_id: Option<&str>,
     ) -> Result<String> {
         info!(
             "Submitting forward: addr={}, domain={}, recipient={}, token_id={}, max_fee={}",
@@ -319,6 +330,8 @@ impl CelestiaClient {
                 denom: fee_denom.to_string(),
                 amount: fee_amount.to_string(),
             }),
+            custom_hook_id: custom_hook_id.unwrap_or_default().to_string(),
+            custom_hook_metadata: String::new(),
         };
 
         // Submissions deliberately do NOT fail over within the call: a timed-out
