@@ -66,11 +66,26 @@ impl BackendStorage {
                 dest_domain    INTEGER NOT NULL,
                 dest_recipient TEXT NOT NULL,
                 token_id       TEXT NOT NULL,
+                custom_hook_id TEXT,
+                custom_hook_metadata TEXT,
                 created_at     TEXT NOT NULL
             )",
             [],
         )
         .context("Failed to create forwarding_requests table")?;
+
+        // Migrate pre-existing databases. NULL is correct for old rows: default-hook addresses.
+        for column in ["custom_hook_id", "custom_hook_metadata"] {
+            if let Err(e) = conn.execute(
+                &format!("ALTER TABLE forwarding_requests ADD COLUMN {column} TEXT"),
+                [],
+            ) {
+                // SQLite has no ADD COLUMN IF NOT EXISTS; a duplicate column means already migrated.
+                if !e.to_string().contains("duplicate column name") {
+                    return Err(e).context(format!("Failed to add {column} column"));
+                }
+            }
+        }
 
         info!("Opened backend database at {:?}", db_path);
 
@@ -90,13 +105,15 @@ impl BackendStorage {
         let created_at = chrono::Utc::now().to_rfc3339();
 
         conn.execute(
-            "INSERT OR IGNORE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, token_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR IGNORE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, token_id, custom_hook_id, custom_hook_metadata, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 &create_req.forward_addr,
                 &create_req.dest_domain,
                 &create_req.dest_recipient,
                 &create_req.token_id,
+                &create_req.custom_hook_id,
+                &create_req.custom_hook_metadata,
                 &created_at
             ],
         )
@@ -114,12 +131,14 @@ impl BackendStorage {
                 dest_domain: create_req.dest_domain,
                 dest_recipient: create_req.dest_recipient,
                 token_id: create_req.token_id,
+                custom_hook_id: create_req.custom_hook_id,
+                custom_hook_metadata: create_req.custom_hook_metadata,
                 created_at,
             }
         } else {
             let mut stmt = conn
                 .prepare(
-                    "SELECT forward_addr, dest_domain, dest_recipient, token_id, created_at
+                    "SELECT forward_addr, dest_domain, dest_recipient, token_id, custom_hook_id, custom_hook_metadata, created_at
                      FROM forwarding_requests WHERE forward_addr = ?1",
                 )
                 .context("Failed to prepare SELECT statement")?;
@@ -131,7 +150,9 @@ impl BackendStorage {
                         dest_domain: row.get(1)?,
                         dest_recipient: row.get(2)?,
                         token_id: row.get(3)?,
-                        created_at: row.get(4)?,
+                        custom_hook_id: row.get(4)?,
+                        custom_hook_metadata: row.get(5)?,
+                        created_at: row.get(6)?,
                     })
                 })
                 .context("Failed to query existing request")?;
@@ -150,13 +171,15 @@ impl BackendStorage {
     pub fn add_request(&self, request: ForwardingRequest) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, token_id, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT OR REPLACE INTO forwarding_requests (forward_addr, dest_domain, dest_recipient, token_id, custom_hook_id, custom_hook_metadata, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 &request.forward_addr,
                 &request.dest_domain,
                 &request.dest_recipient,
                 &request.token_id,
+                &request.custom_hook_id,
+                &request.custom_hook_metadata,
                 &request.created_at
             ],
         )
@@ -170,7 +193,7 @@ impl BackendStorage {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT forward_addr, dest_domain, dest_recipient, token_id, created_at
+                "SELECT forward_addr, dest_domain, dest_recipient, token_id, custom_hook_id, custom_hook_metadata, created_at
                  FROM forwarding_requests ORDER BY created_at",
             )
             .context("Failed to prepare SELECT statement")?;
@@ -182,7 +205,9 @@ impl BackendStorage {
                     dest_domain: row.get(1)?,
                     dest_recipient: row.get(2)?,
                     token_id: row.get(3)?,
-                    created_at: row.get(4)?,
+                    custom_hook_id: row.get(4)?,
+                    custom_hook_metadata: row.get(5)?,
+                    created_at: row.get(6)?,
                 })
             })
             .context("Failed to query forwarding requests")?;
@@ -226,7 +251,7 @@ impl BackendStorage {
 
         let mut stmt = conn
             .prepare(
-                "SELECT forward_addr, dest_domain, dest_recipient, token_id, created_at
+                "SELECT forward_addr, dest_domain, dest_recipient, token_id, custom_hook_id, custom_hook_metadata, created_at
                  FROM forwarding_requests WHERE forward_addr = ?1",
             )
             .context("Failed to prepare SELECT statement")?;
@@ -238,7 +263,9 @@ impl BackendStorage {
                     dest_domain: row.get(1)?,
                     dest_recipient: row.get(2)?,
                     token_id: row.get(3)?,
-                    created_at: row.get(4)?,
+                    custom_hook_id: row.get(4)?,
+                    custom_hook_metadata: row.get(5)?,
+                    created_at: row.get(6)?,
                 })
             })
             .optional()
@@ -383,11 +410,24 @@ struct ForwardingAddressQuery {
     dest_domain: u32,
     dest_recipient: String,
     token_id: String,
+    /// Optional hook to bind the address to; omit for the mailbox default hook.
+    #[serde(default)]
+    custom_hook_id: Option<String>,
+    /// Optional hook metadata to bind the address to; committed alongside custom_hook_id.
+    #[serde(default)]
+    custom_hook_metadata: Option<String>,
 }
 
-/// GET /forwarding-address?dest_domain=<u32>&dest_recipient=<hex>&token_id=<hex> - Derive forwarding address
+/// GET /forwarding-address?dest_domain=<u32>&dest_recipient=<hex>&token_id=<hex>[&custom_hook_id=<hex>]
+/// - Derive forwarding address
 async fn get_forwarding_address(Query(params): Query<ForwardingAddressQuery>) -> impl IntoResponse {
-    match derive_forwarding_address(params.dest_domain, &params.dest_recipient, &params.token_id) {
+    match derive_forwarding_address(
+        params.dest_domain,
+        &params.dest_recipient,
+        &params.token_id,
+        params.custom_hook_id.as_deref(),
+        params.custom_hook_metadata.as_deref(),
+    ) {
         Ok(address) => (
             StatusCode::OK,
             Json(serde_json::json!({ "address": address })),
@@ -423,10 +463,13 @@ async fn create_request(
     State(state): State<BackendState>,
     Json(create_req): Json<CreateForwardingRequest>,
 ) -> impl IntoResponse {
+    // The hook and metadata are part of the derivation, so validate the address against them.
     match derive_forwarding_address(
         create_req.dest_domain,
         &create_req.dest_recipient,
         &create_req.token_id,
+        create_req.custom_hook_id.as_deref(),
+        create_req.custom_hook_metadata.as_deref(),
     ) {
         Ok(derived) if derived == create_req.forward_addr => {}
         Ok(derived) => {
@@ -436,7 +479,7 @@ async fn create_request(
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
-                    "error": "forward_addr does not match derivation from dest_domain/dest_recipient/token_id",
+                    "error": "forward_addr does not match derivation from dest_domain/dest_recipient/token_id/custom_hook_id/custom_hook_metadata",
                     "expected": derived,
                     "got": create_req.forward_addr,
                 })),

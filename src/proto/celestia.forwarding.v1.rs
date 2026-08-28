@@ -38,7 +38,7 @@ pub struct QueryDeriveForwardingAddressRequest {
     /// dest_recipient is the recipient on destination chain (32 bytes, hex-encoded, 0x prefix optional).
     #[prost(string, tag="2")]
     pub dest_recipient: ::prost::alloc::string::String,
-    /// token_id is the hex-encoded token identifier.
+    /// token_id is the Hyperlane token identifier to bind this forwarding address to.
     #[prost(string, tag="3")]
     pub token_id: ::prost::alloc::string::String,
 }
@@ -57,9 +57,19 @@ pub struct QueryQuoteForwardingFeeRequest {
     /// dest_domain is the destination chain domain ID.
     #[prost(uint32, tag="1")]
     pub dest_domain: u32,
-    /// token_id is the hex-encoded token identifier.
+    /// token_id is the Hyperlane token identifier to quote fees for.
     #[prost(string, tag="2")]
     pub token_id: ::prost::alloc::string::String,
+    /// custom_hook_id optionally selects the post-dispatch hook (e.g. an alternative
+    /// IGP) the forward will be routed through, so the quote reflects that hook's
+    /// price. Hex-encoded (0x prefix optional). Empty => mailbox default hook.
+    #[prost(string, tag="3")]
+    pub custom_hook_id: ::prost::alloc::string::String,
+    /// custom_hook_metadata is optional hex-encoded metadata passed to the custom
+    /// hook. Some hooks price the dispatch off this metadata, so it must match the
+    /// custom_hook_metadata used in MsgForward.
+    #[prost(string, tag="4")]
+    pub custom_hook_metadata: ::prost::alloc::string::String,
 }
 /// QueryQuoteForwardingFeeResponse is the response for QuoteForwardingFee.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -88,7 +98,7 @@ pub struct MsgForward {
     /// dest_recipient is the recipient on destination chain (32 bytes, hex-encoded, 0x prefix optional).
     #[prost(string, tag="4")]
     pub dest_recipient: ::prost::alloc::string::String,
-    /// token_id is the hex-encoded token identifier used to derive the per-token forwarding address.
+    /// token_id is the Hyperlane token identifier this forwarding request is bound to.
     #[prost(string, tag="5")]
     pub token_id: ::prost::alloc::string::String,
     /// max_igp_fee is the maximum Hyperlane IGP fee the relayer will pay for this forwarding.
@@ -96,6 +106,13 @@ pub struct MsgForward {
     /// Required: relayer must provide sufficient fee for the transfer.
     #[prost(message, optional, tag="6")]
     pub max_igp_fee: ::core::option::Option<super::super::super::cosmos::base::v1beta1::Coin>,
+    /// custom_hook_id optionally selects the post-dispatch hook (e.g. an alternative
+    /// IGP) that handles the interchain gas payment. Empty => mailbox default hook.
+    #[prost(string, tag="7")]
+    pub custom_hook_id: ::prost::alloc::string::String,
+    /// custom_hook_metadata is optional hex-encoded metadata passed to the custom hook.
+    #[prost(string, tag="8")]
+    pub custom_hook_metadata: ::prost::alloc::string::String,
 }
 /// MsgForwardResponse is the response for MsgForward.
 #[allow(clippy::derive_partial_eq_without_eq)]
