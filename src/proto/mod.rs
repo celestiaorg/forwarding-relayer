@@ -1,6 +1,6 @@
 pub mod celestia {
     pub mod forwarding {
-        #[allow(dead_code)]
+        #[allow(dead_code, clippy::result_large_err)]
         pub mod v1 {
             include!("celestia.forwarding.v1.rs");
         }
