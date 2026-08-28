@@ -209,17 +209,17 @@ fn test_derive_forwarding_address_hook_matches_go() {
         (
             Some(HOOK_ID),
             None,
-            "6f1b41767279393fd1fbec23f090fa84db7e2d28",
+            "f223c1d6bdea545cdce0b4e6b7e1d75a083936c7",
         ),
         (
             Some(HOOK_ID),
             Some(METADATA),
-            "15b80919673356e9cf6c56ab336f857635b7c29b",
+            "22b7be4573c43c2cc6d5e65fdb026093e287d013",
         ),
         (
             None,
             Some(METADATA),
-            "d5f42de3575ee4359ffd0ef162abef858f91469f",
+            "4786c4d06691b8d30aa5cf46657ad5cd2f88eb6e",
         ),
         (None, None, "27e0c578f2c44de8ddd0bb58782069b65054b987"),
     ];
@@ -248,7 +248,7 @@ fn test_derive_forwarding_address_hook_matches_go() {
 }
 
 /// None, empty, and the zero address all mean "mailbox default hook". With no metadata that
-/// must collapse to the version-1 address, matching the chain's normalisation.
+/// must collapse to the plain address, matching the chain's normalisation.
 #[test]
 fn test_derive_forwarding_address_zero_hook_is_default() {
     const DEST_DOMAIN: u32 = 42161;

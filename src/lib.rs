@@ -145,7 +145,7 @@ pub fn derive_private_key_from_mnemonic(mnemonic: &str) -> Result<String> {
 ///
 /// Algorithm from celestia-app/x/forwarding/types/address.go:
 /// 1. callDigest = sha256(destDomain_32bytes || destRecipient || tokenID [|| hookID || metadata])
-/// 2. salt = sha256(version || callDigest)
+/// 2. salt = sha256(FORWARD_VERSION || callDigest)
 /// 3. address = address.Module("forwarding", salt)[:20]
 /// 4. Encode as bech32 with "celestia" prefix
 ///
@@ -230,17 +230,11 @@ pub fn derive_forwarding_address(
     }
     let call_digest = hasher.finalize();
 
-    // Step 3: salt = sha256(version || callDigest). Version and preimage move together, so the
-    // two schemes cannot collide.
+    // Step 3: salt = sha256(FORWARD_VERSION || callDigest). The bound preimage is longer than
+    // the unbound one, so the two cannot collide.
     const FORWARD_VERSION: u8 = 1;
-    const FORWARD_VERSION_HOOK: u8 = 2;
-    let version = if bound {
-        FORWARD_VERSION_HOOK
-    } else {
-        FORWARD_VERSION
-    };
     let mut hasher = Sha256::new();
-    hasher.update([version]);
+    hasher.update([FORWARD_VERSION]);
     hasher.update(call_digest);
     let salt = hasher.finalize();
 
