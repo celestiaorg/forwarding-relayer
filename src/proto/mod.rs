@@ -1,6 +1,6 @@
 pub mod celestia {
     pub mod forwarding {
-        #[allow(dead_code)]
+        #[allow(dead_code, clippy::all)]
         pub mod v1 {
             include!("celestia.forwarding.v1.rs");
         }
@@ -9,7 +9,7 @@ pub mod celestia {
 
 pub mod cosmos {
     pub mod base {
-        #[allow(dead_code)]
+        #[allow(dead_code, clippy::all)]
         pub mod v1beta1 {
             include!("cosmos.base.v1beta1.rs");
         }

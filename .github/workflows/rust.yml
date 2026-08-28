@@ -13,7 +13,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@1.98.0
             - uses: Swatinem/rust-cache@v2
             - name: Check formatting
               run: make fmt-check
@@ -23,7 +23,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@1.98.0
             - uses: Swatinem/rust-cache@v2
             - name: Run clippy
               run: make lint
@@ -33,7 +33,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
-            - uses: dtolnay/rust-toolchain@stable
+            - uses: dtolnay/rust-toolchain@1.98.0
             - uses: Swatinem/rust-cache@v2
             - name: Run workspace tests
               run: make test-rust
