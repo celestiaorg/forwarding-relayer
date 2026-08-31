@@ -9,6 +9,7 @@ mod backend;
 mod client;
 mod metrics;
 mod proto;
+mod rate_limit;
 mod relayer;
 mod scanner;
 
@@ -20,6 +21,7 @@ pub use backend::{
     PendingRequestMetricsSnapshot,
 };
 pub use metrics::{init_metrics_exporter, metrics_enabled, render_metrics};
+pub use rate_limit::{AppConfig, RateLimitDecision, RateLimitFileConfig, RateLimiter};
 pub use relayer::{
     balances_equal, parse_metric_amount, retirement_reason, retry_delay, Relayer, RelayerConfig,
     RetireReason,

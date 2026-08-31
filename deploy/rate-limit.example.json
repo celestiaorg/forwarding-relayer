@@ -1,0 +1,11 @@
+{
+  "default_per_minute": 1,
+  "whitelist_default_per_minute": 6000,
+  "apps": [
+    {
+      "name": "example-app",
+      "hosts": ["203.0.113.10", "api.example.com"],
+      "per_minute": 6000
+    }
+  ]
+}
