@@ -21,7 +21,7 @@
 //! # Block_Results Cursor Recovery
 //!
 //! The cursor normally advances only on a successful `block_results` fetch, so a
-//! height that no endpoint can serve would stall it forever. Cursor recovery
+//! height that no endpoint can serve would pruned it forever. Cursor recovery
 //! skips past a stuck height only on *evidence* that waiting
 //! cannot fix it: immediately when every configured endpoint reports the height
 //! pruned (below its `earliest_block_height`), and after a timeout when an
@@ -212,7 +212,7 @@ struct RpcEndpoint {
 /// An ordered set of interchangeable CometBFT RPC endpoints. The first is the
 /// preferred primary and the rest are fallbacks. The scanner runs one session
 /// against one endpoint at a time and rotates to the next on failure, so a single
-/// unhealthy node degrades to its neighbor instead of stalling deposit detection.
+/// unhealthy node degrades to its neighbor instead of pruneding deposit detection.
 struct RpcPool {
     endpoints: Vec<RpcEndpoint>,
 }
@@ -331,16 +331,16 @@ struct HeightEvidence {
 
 /// Verdict on a stuck height, derived purely from gathered [`HeightEvidence`].
 #[derive(Debug, PartialEq, Eq)]
-enum StallVerdict {
+enum PrunedVerdict {
     /// Every endpoint that answered has pruned the height; no amount of retrying can
     /// fetch it. Resume from `new_cursor + 1`, the lowest height any of them still
     /// retains. `unanimous` is true when every *configured* endpoint testified — a
     /// non-unanimous verdict leaves open that an unreachable endpoint still holds
-    /// the blocks, so the caller waits out the stall timeout before acting on it.
+    /// the blocks, so the caller waits out the timeout before acting on it.
     Pruned { new_cursor: u64, unanimous: bool },
     /// At least one endpoint retains the height yet fails to serve it, and none can
     /// serve it: a height-specific serving failure (corrupt or unindexed block),
-    /// not a connectivity problem. Skipped only after the stall timeout.
+    /// not a connectivity problem. Skipped only after the timeout.
     Unservable,
     /// The height was served by some endpoint, a retaining endpoint may still be
     /// syncing toward it, or no endpoint answered at all: waiting may fix it, so
@@ -349,34 +349,34 @@ enum StallVerdict {
 }
 
 /// Judge a stuck height from endpoint testimony. Pure, so the skip policy — the
-/// safety-critical part of stall recovery — is unit-testable without a network.
+/// safety-critical part of pruned recovery; is unit-testable without a network.
 fn assess_evidence(
     evidence: &[HeightEvidence],
     total_endpoints: usize,
     stuck: u64,
-) -> StallVerdict {
+) -> PrunedVerdict {
     if evidence.iter().any(|e| e.probe == Some(true)) {
-        return StallVerdict::Wait; // fetchable right now; the next session consumes it
+        return PrunedVerdict::Wait; // fetchable right now; the next session consumes it
     }
     let Some(min_earliest) = evidence.iter().map(|e| e.earliest).min() else {
-        return StallVerdict::Wait; // nobody answered: an outage, not height evidence
+        return PrunedVerdict::Wait; // nobody answered: an outage, not height evidence
     };
     if min_earliest > stuck {
-        return StallVerdict::Pruned {
+        return PrunedVerdict::Pruned {
             new_cursor: min_earliest - 1,
             unanimous: evidence.len() == total_endpoints,
         };
     }
     if evidence.iter().any(|e| e.probe == Some(false)) {
-        return StallVerdict::Unservable;
+        return PrunedVerdict::Unservable;
     }
-    StallVerdict::Wait // a holder exists but is still syncing toward the height
+    PrunedVerdict::Wait // a holder exists but is still syncing toward the height
 }
 
 /// The height the scanner is currently stuck on and when it first got stuck there.
 /// The clock resets whenever the cursor moves (a new stuck height) or a session
 /// ends cleanly.
-struct Stall {
+struct Pruned {
     height: u64,
     since: Instant,
 }
@@ -393,11 +393,11 @@ struct Stall {
 /// first is the primary and the rest are fallbacks. Each scan session runs against a
 /// single endpoint and a session failure rotates to the next, so one unhealthy node
 /// fails over to its neighbor. Because the cursor only advances on success (or on
-/// proven-unrecoverable stall recovery — see the module docs), failing over
+/// proven-unrecoverable pruned recovery — see the module docs), failing over
 /// mid-stream never skips a block — the next endpoint resumes where this one left off.
 ///
 /// `timeout` bounds how long the scanner stays stuck on a single height whose
-/// unavailability is not yet *proven* permanent; see [`recover_stall`].
+/// unavailability is not yet *proven* permanent; see [`recover_pruned`].
 pub(crate) async fn run_block_scanner(
     rpc_url: String,
     start_height: Option<u64>,
@@ -444,9 +444,9 @@ pub(crate) async fn run_block_scanner(
     // session failure advances to the next so an unhealthy node is skipped on the
     // next attempt. A clean subscription end keeps the same (working) endpoint.
     let mut current = 0;
-    // Stuck-height tracker for stall recovery, carried across sessions so repeated
-    // failures on the same height accumulate toward the stall timeout.
-    let mut stall: Option<Stall> = None;
+    // Stuck-height tracker for pruned recovery, carried across sessions so repeated
+    // failures on the same height accumulate toward the pruned timeout.
+    let mut pruned: Option<Pruned> = None;
     loop {
         let endpoint = &pool.endpoints[current];
         match scan_session(
@@ -461,7 +461,7 @@ pub(crate) async fn run_block_scanner(
         .await
         {
             Ok(()) => {
-                stall = None;
+                pruned = None;
                 warn!(
                     "Block subscription ended on {}; reconnecting in {}s",
                     endpoint.url,
@@ -482,10 +482,10 @@ pub(crate) async fn run_block_scanner(
                         pool.endpoints[current].url
                     );
                 }
-                recover_stall(
+                recover_pruned(
                     &pool,
                     &mut cursor,
-                    &mut stall,
+                    &mut pruned,
                     timeout,
                     confirmation_depth,
                     &store,
@@ -514,22 +514,22 @@ pub(crate) async fn run_block_scanner(
 ///   skipped, and only after `timeout`.
 ///
 /// Everything else — nodes syncing toward the height, RPC outages, WebSocket
-/// failures — is a [`StallVerdict::Wait`]: the cursor stays put and event-driven
+/// failures — is a [`PrunedVerdict::Wait`]: the cursor stays put and event-driven
 /// scanning resumes from it, gap-free, as soon as a node can serve the height.
-async fn recover_stall(
+async fn recover_pruned(
     pool: &RpcPool,
     cursor: &mut u64,
-    stall: &mut Option<Stall>,
+    pruned: &mut Option<Pruned>,
     timeout: Duration,
     confirmation_depth: u64,
     store: &Arc<Mutex<RetryStore>>,
 ) {
     let stuck = *cursor + 1;
-    let since = match stall {
+    let since = match pruned {
         Some(s) if s.height == stuck => s.since,
         _ => {
             let now = Instant::now();
-            *stall = Some(Stall {
+            *pruned = Some(Pruned {
                 height: stuck,
                 since: now,
             });
@@ -540,7 +540,7 @@ async fn recover_stall(
 
     let evidence = pool.gather_height_evidence(stuck, confirmation_depth).await;
     match assess_evidence(&evidence, pool.len(), stuck) {
-        StallVerdict::Pruned {
+        PrunedVerdict::Pruned {
             new_cursor,
             unanimous,
         } => {
@@ -555,7 +555,7 @@ async fn recover_stall(
                 counter!("relayer_scan_blocks_skipped_total", "reason" => "pruned")
                     .increment(skipped);
                 advance_cursor(cursor, new_cursor, store);
-                *stall = None;
+                *pruned = None;
             } else {
                 warn!(
                     "Height {stuck} is pruned on every reachable endpoint, but {} of {} \
@@ -566,7 +566,7 @@ async fn recover_stall(
                 );
             }
         }
-        StallVerdict::Unservable => {
+        PrunedVerdict::Unservable => {
             if elapsed >= timeout {
                 warn!(
                     "Height {stuck} still unservable after {}s despite being within a node's \
@@ -577,7 +577,7 @@ async fn recover_stall(
                 counter!("relayer_scan_blocks_skipped_total", "reason" => "unservable")
                     .increment(1);
                 advance_cursor(cursor, stuck, store);
-                *stall = None;
+                *pruned = None;
             } else {
                 warn!(
                     "Height {stuck} is retained but not served by any endpoint; skipping it in \
@@ -586,16 +586,16 @@ async fn recover_stall(
                 );
             }
         }
-        StallVerdict::Wait => {
+        PrunedVerdict::Wait => {
             debug!(
-                "Height {stuck} not provably unrecoverable (stalled {}s); retrying",
+                "Height {stuck} not provably unrecoverable (pruneded {}s); retrying",
                 elapsed.as_secs()
             );
         }
     }
 }
 
-/// Advance and persist the scan cursor during stall recovery (the normal per-block
+/// Advance and persist the scan cursor during pruned recovery (the normal per-block
 /// advance lives in `scan_to` and follows the same persist-then-gauge pattern).
 fn advance_cursor(cursor: &mut u64, new_cursor: u64, store: &Arc<Mutex<RetryStore>>) {
     *cursor = new_cursor;
@@ -816,7 +816,7 @@ mod tests {
     #[test]
     fn waits_when_no_endpoint_answers() {
         // A total outage is connectivity evidence, not height evidence: never skip.
-        assert_eq!(assess_evidence(&[], 2, 100), StallVerdict::Wait);
+        assert_eq!(assess_evidence(&[], 2, 100), PrunedVerdict::Wait);
     }
 
     #[test]
@@ -828,7 +828,7 @@ mod tests {
             testimony(1, Some(false)), // holder, broken
             testimony(1, Some(true)),  // holder, serving
         ];
-        assert_eq!(assess_evidence(&evidence, 3, 100), StallVerdict::Wait);
+        assert_eq!(assess_evidence(&evidence, 3, 100), PrunedVerdict::Wait);
     }
 
     #[test]
@@ -836,7 +836,7 @@ mod tests {
         // The endpoint retains the height but wasn't probed (tip not far enough
         // past it): it is still syncing toward the height, so waiting fixes this.
         let evidence = [testimony(1, None)];
-        assert_eq!(assess_evidence(&evidence, 1, 100), StallVerdict::Wait);
+        assert_eq!(assess_evidence(&evidence, 1, 100), PrunedVerdict::Wait);
     }
 
     #[test]
@@ -846,7 +846,7 @@ mod tests {
         let evidence = [testimony(5000, None), testimony(6000, None)];
         assert_eq!(
             assess_evidence(&evidence, 2, 100),
-            StallVerdict::Pruned {
+            PrunedVerdict::Pruned {
                 new_cursor: 4999,
                 unanimous: true
             }
@@ -860,7 +860,7 @@ mod tests {
         let evidence = [testimony(5000, None), testimony(6000, None)];
         assert_eq!(
             assess_evidence(&evidence, 3, 100),
-            StallVerdict::Pruned {
+            PrunedVerdict::Pruned {
                 new_cursor: 4999,
                 unanimous: false
             }
@@ -872,7 +872,7 @@ mod tests {
         // The endpoint retains the height, its tip is well past it, and the direct
         // probe failed: height-specific breakage, skippable (after the timeout).
         let evidence = [testimony(1, Some(false))];
-        assert_eq!(assess_evidence(&evidence, 1, 100), StallVerdict::Unservable);
+        assert_eq!(assess_evidence(&evidence, 1, 100), PrunedVerdict::Unservable);
     }
 
     #[test]
@@ -881,7 +881,7 @@ mod tests {
         // serve it): the height is not gone from the pool, so this must be the
         // single-block unservable skip, never a multi-block pruned jump.
         let evidence = [testimony(5000, None), testimony(1, Some(false))];
-        assert_eq!(assess_evidence(&evidence, 2, 100), StallVerdict::Unservable);
+        assert_eq!(assess_evidence(&evidence, 2, 100), PrunedVerdict::Unservable);
     }
 
     #[test]
