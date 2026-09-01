@@ -327,6 +327,20 @@ pub struct RelayerConfig {
     #[arg(long, env = "BLOCK_CONFIRMATION_DEPTH", default_value = "2")]
     pub block_confirmation_depth: u64,
 
+    /// Max seconds the block scanner may stay stuck on a single unfetchable height
+    /// before stall recovery may skip past it. The scanner never skips on a mere
+    /// error: a height that is temporarily unavailable (node down, resyncing,
+    /// unreachable) is retried indefinitely and event-driven scanning resumes from
+    /// it gap-free once the node recovers. Skipping requires evidence — immediate
+    /// when every endpoint reports the height pruned from its retention window, and
+    /// after this timeout when a node retains the height but persistently fails to
+    /// serve it (or when the pruned verdict is missing testimony from an unreachable
+    /// endpoint). Deposits in a skipped range are recovered by the balance-poll
+    /// sweep, so keep `balance_poll_interval` enabled. Values below 60 are raised
+    /// to 60.
+    #[arg(long, env = "SCAN_TIMEOUT", default_value = "1800")]
+    pub scan_timeout: u64,
+
     /// IGP fee buffer multiplier (e.g., 1.1 for 10% buffer)
     #[arg(long, env = "IGP_FEE_BUFFER", default_value = "1.1")]
     pub igp_fee_buffer: f64,
@@ -637,6 +651,7 @@ impl Relayer {
                     shared.config.celestia_rpc.clone(),
                     shared.config.block_scan_start_height,
                     shared.config.block_confirmation_depth,
+                    Duration::from_secs(shared.config.scan_timeout.max(60)),
                     shared.live.clone(),
                     shared.store.clone(),
                     tx,

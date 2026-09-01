@@ -1846,7 +1846,7 @@ dependencies = [
 
 [[package]]
 name = "forwarding-relayer"
-version = "0.2.9"
+version = "0.2.10"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
