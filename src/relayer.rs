@@ -338,8 +338,8 @@ pub struct RelayerConfig {
     /// endpoint). Deposits in a skipped range are recovered by the balance-poll
     /// sweep, so keep `balance_poll_interval` enabled. Values below 60 are raised
     /// to 60.
-    #[arg(long, env = "SCAN_STALL_TIMEOUT", default_value = "1800")]
-    pub scan_stall_timeout: u64,
+    #[arg(long, env = "SCAN_TIMEOUT", default_value = "1800")]
+    pub scan_timeout: u64,
 
     /// IGP fee buffer multiplier (e.g., 1.1 for 10% buffer)
     #[arg(long, env = "IGP_FEE_BUFFER", default_value = "1.1")]
@@ -651,7 +651,7 @@ impl Relayer {
                     shared.config.celestia_rpc.clone(),
                     shared.config.block_scan_start_height,
                     shared.config.block_confirmation_depth,
-                    Duration::from_secs(shared.config.scan_stall_timeout.max(60)),
+                    Duration::from_secs(shared.config.scan_timeout.max(60)),
                     shared.live.clone(),
                     shared.store.clone(),
                     tx,

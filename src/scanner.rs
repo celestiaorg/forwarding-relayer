@@ -18,15 +18,15 @@
 //! has long since indexed the block. This is purely an indexing-lag margin, not reorg
 //! protection.
 //!
-//! # Stall recovery
+//! # Block_Results Cursor Recovery
 //!
 //! The cursor normally advances only on a successful `block_results` fetch, so a
-//! height that no endpoint can serve would stall it forever. Stall recovery
-//! ([`recover_stall`]) skips past a stuck height only on *evidence* that waiting
+//! height that no endpoint can serve would stall it forever. Cursor recovery
+//! skips past a stuck height only on *evidence* that waiting
 //! cannot fix it: immediately when every configured endpoint reports the height
-//! pruned (below its `earliest_block_height`), and after a stall timeout when an
-//! endpoint retains the height but persistently fails to serve it. A height that is
-//! merely temporarily unavailable — the node is down, resyncing, or unreachable —
+//! pruned (below its `earliest_block_height`), and after a timeout when an
+//! endpoint retains the height but persistently fails to serve it.
+//! In the event where a height temporarily unavailable, due to the node being down, resyncing, or unreachable -
 //! is retried indefinitely, and event-driven scanning resumes from the exact cursor
 //! once the node recovers, replaying every retained block with no gap. Deposits in
 //! any range that *is* skipped are recovered by the relayer's balance-poll sweep,
@@ -396,13 +396,13 @@ struct Stall {
 /// proven-unrecoverable stall recovery — see the module docs), failing over
 /// mid-stream never skips a block — the next endpoint resumes where this one left off.
 ///
-/// `stall_timeout` bounds how long the scanner stays stuck on a single height whose
+/// `timeout` bounds how long the scanner stays stuck on a single height whose
 /// unavailability is not yet *proven* permanent; see [`recover_stall`].
 pub(crate) async fn run_block_scanner(
     rpc_url: String,
     start_height: Option<u64>,
     confirmation_depth: u64,
-    stall_timeout: Duration,
+    timeout: Duration,
     live: LiveSet,
     store: Arc<Mutex<RetryStore>>,
     deposits_tx: Sender<String>,
@@ -486,7 +486,7 @@ pub(crate) async fn run_block_scanner(
                     &pool,
                     &mut cursor,
                     &mut stall,
-                    stall_timeout,
+                    timeout,
                     confirmation_depth,
                     &store,
                 )
@@ -507,11 +507,11 @@ pub(crate) async fn run_block_scanner(
 /// - **Pruned**: every reachable endpoint reports the height below its retention
 ///   horizon. The cursor jumps to just before the lowest height any endpoint still
 ///   retains — immediately when all configured endpoints testified, or after
-///   `stall_timeout` when some were unreachable (an unreachable node may yet return
+///   `timeout` when some were unreachable (an unreachable node may yet return
 ///   holding the blocks, in which case event-driven scanning replays them in full).
 /// - **Unservable**: some endpoint retains the height yet persistently fails to
 ///   serve it (e.g. a corrupt or unindexed block). Only that single height is
-///   skipped, and only after `stall_timeout`.
+///   skipped, and only after `timeout`.
 ///
 /// Everything else — nodes syncing toward the height, RPC outages, WebSocket
 /// failures — is a [`StallVerdict::Wait`]: the cursor stays put and event-driven
@@ -520,7 +520,7 @@ async fn recover_stall(
     pool: &RpcPool,
     cursor: &mut u64,
     stall: &mut Option<Stall>,
-    stall_timeout: Duration,
+    timeout: Duration,
     confirmation_depth: u64,
     store: &Arc<Mutex<RetryStore>>,
 ) {
@@ -544,7 +544,7 @@ async fn recover_stall(
             new_cursor,
             unanimous,
         } => {
-            if unanimous || elapsed >= stall_timeout {
+            if unanimous || elapsed >= timeout {
                 let skipped = new_cursor - *cursor;
                 warn!(
                     "Heights {stuck}..={new_cursor} are pruned on every reachable RPC endpoint; \
@@ -562,12 +562,12 @@ async fn recover_stall(
                      endpoint(s) did not answer; waiting up to {}s more for them before skipping",
                     pool.len() - evidence.len(),
                     pool.len(),
-                    stall_timeout.saturating_sub(elapsed).as_secs()
+                    timeout.saturating_sub(elapsed).as_secs()
                 );
             }
         }
         StallVerdict::Unservable => {
-            if elapsed >= stall_timeout {
+            if elapsed >= timeout {
                 warn!(
                     "Height {stuck} still unservable after {}s despite being within a node's \
                      retention window; skipping this single block. Any deposit in it will be \
@@ -582,7 +582,7 @@ async fn recover_stall(
                 warn!(
                     "Height {stuck} is retained but not served by any endpoint; skipping it in \
                      {}s unless it becomes fetchable",
-                    stall_timeout.saturating_sub(elapsed).as_secs()
+                    timeout.saturating_sub(elapsed).as_secs()
                 );
             }
         }
@@ -814,13 +814,13 @@ mod tests {
     }
 
     #[test]
-    fn stall_waits_when_no_endpoint_answers() {
+    fn waits_when_no_endpoint_answers() {
         // A total outage is connectivity evidence, not height evidence: never skip.
         assert_eq!(assess_evidence(&[], 2, 100), StallVerdict::Wait);
     }
 
     #[test]
-    fn stall_waits_when_any_endpoint_serves_the_height() {
+    fn waits_when_any_endpoint_serves_the_height() {
         // One endpoint serving the height outweighs everything else, including a
         // broken holder and a pruned neighbor — the next session will fetch it.
         let evidence = [
@@ -832,7 +832,7 @@ mod tests {
     }
 
     #[test]
-    fn stall_waits_for_a_syncing_holder() {
+    fn waits_for_a_syncing_holder() {
         // The endpoint retains the height but wasn't probed (tip not far enough
         // past it): it is still syncing toward the height, so waiting fixes this.
         let evidence = [testimony(1, None)];
@@ -840,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn stall_jumps_when_all_endpoints_pruned_the_height() {
+    fn jumps_when_all_endpoints_pruned_the_height() {
         // Both endpoints answered and both pruned height 100; resume just before
         // the lowest retained height (5000), i.e. new_cursor 4999.
         let evidence = [testimony(5000, None), testimony(6000, None)];
@@ -854,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn stall_pruned_verdict_is_not_unanimous_with_missing_testimony() {
+    fn pruned_verdict_is_not_unanimous_with_missing_testimony() {
         // One of three endpoints didn't answer; it may still hold the height, so
         // the verdict must not authorize an immediate jump.
         let evidence = [testimony(5000, None), testimony(6000, None)];
@@ -868,7 +868,7 @@ mod tests {
     }
 
     #[test]
-    fn stall_unservable_when_a_holder_fails_to_serve() {
+    fn unservable_when_a_holder_fails_to_serve() {
         // The endpoint retains the height, its tip is well past it, and the direct
         // probe failed: height-specific breakage, skippable (after the timeout).
         let evidence = [testimony(1, Some(false))];
@@ -876,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn stall_mixed_pruned_and_broken_holder_is_unservable_not_pruned() {
+    fn mixed_pruned_and_broken_holder_is_unservable_not_pruned() {
         // One endpoint pruned the height but another still holds it (and fails to
         // serve it): the height is not gone from the pool, so this must be the
         // single-block unservable skip, never a multi-block pruned jump.
