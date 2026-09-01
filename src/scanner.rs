@@ -872,7 +872,10 @@ mod tests {
         // The endpoint retains the height, its tip is well past it, and the direct
         // probe failed: height-specific breakage, skippable (after the timeout).
         let evidence = [testimony(1, Some(false))];
-        assert_eq!(assess_evidence(&evidence, 1, 100), PrunedVerdict::Unservable);
+        assert_eq!(
+            assess_evidence(&evidence, 1, 100),
+            PrunedVerdict::Unservable
+        );
     }
 
     #[test]
@@ -881,7 +884,10 @@ mod tests {
         // serve it): the height is not gone from the pool, so this must be the
         // single-block unservable skip, never a multi-block pruned jump.
         let evidence = [testimony(5000, None), testimony(1, Some(false))];
-        assert_eq!(assess_evidence(&evidence, 2, 100), PrunedVerdict::Unservable);
+        assert_eq!(
+            assess_evidence(&evidence, 2, 100),
+            PrunedVerdict::Unservable
+        );
     }
 
     #[test]
