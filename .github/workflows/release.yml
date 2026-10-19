@@ -24,7 +24,7 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.0
 
       - name: Restore cargo cache
         uses: Swatinem/rust-cache@v2

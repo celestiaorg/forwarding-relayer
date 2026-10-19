@@ -245,6 +245,14 @@ impl BackendStorage {
         })
     }
 
+    /// Verify the database is reachable
+    pub fn health_check(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT 1", [], |_| Ok(()))
+            .context("Database health check failed")?;
+        Ok(())
+    }
+
     /// Remove a request by address (called when forwarding completes)
     pub fn remove_by_addr(&self, forward_addr: &str) -> Result<Option<ForwardingRequest>> {
         let conn = self.conn.lock().unwrap();
@@ -321,6 +329,10 @@ impl BackendState {
         self.storage.remove_by_addr(forward_addr)
     }
 
+    pub fn health_check(&self) -> Result<()> {
+        self.storage.health_check()
+    }
+
     pub fn metrics_enabled(&self) -> bool {
         self.metrics_enabled
     }
@@ -372,6 +384,7 @@ impl Backend {
         }
 
         let app = Router::new()
+            .route("/health", get(health))
             .route("/forwarding-address", get(get_forwarding_address))
             .route(
                 "/forwarding-requests",
@@ -402,6 +415,17 @@ pub fn oldest_pending_request_age_seconds(created_at: Option<&str>) -> Result<f6
         .num_seconds();
 
     Ok(age.max(0) as f64)
+}
+
+/// GET /health - Returns 200 "OK" if the database is reachable, 500 otherwise
+async fn health(State(state): State<BackendState>) -> Result<&'static str, StatusCode> {
+    match state.health_check() {
+        Ok(()) => Ok("OK"),
+        Err(e) => {
+            error!("Health check failed: {:#}", e);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
 }
 
 /// Query params for GET /forwarding-address
