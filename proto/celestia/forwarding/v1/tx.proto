@@ -42,6 +42,13 @@ message MsgForward {
   // The actual fee charged is the lesser of max_igp_fee and the quoted fee.
   // Required: relayer must provide sufficient fee for the transfer.
   cosmos.base.v1beta1.Coin max_igp_fee = 6 [(gogoproto.nullable) = false];
+
+  // custom_hook_id optionally selects the post-dispatch hook (e.g. an alternative
+  // IGP) that handles the interchain gas payment. Empty => mailbox default hook.
+  string custom_hook_id = 7;
+
+  // custom_hook_metadata is optional hex-encoded metadata passed to the custom hook.
+  string custom_hook_metadata = 8;
 }
 
 // MsgForwardResponse is the response for MsgForward.

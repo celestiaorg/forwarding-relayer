@@ -32,12 +32,16 @@ async fn main() -> Result<()> {
             dest_domain,
             dest_recipient,
             token_id,
+            custom_hook_id,
+            custom_hook_metadata,
         } => {
             // Derive forwarding address
             let address = forwarding_relayer::derive_forwarding_address(
                 dest_domain,
                 &dest_recipient,
                 &token_id,
+                custom_hook_id.as_deref(),
+                custom_hook_metadata.as_deref(),
             )?;
             println!("{}", address);
             Ok(())
